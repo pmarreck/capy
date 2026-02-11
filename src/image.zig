@@ -39,31 +39,20 @@ pub const ImageData = struct {
 
     pub fn fromFile(allocator: std.mem.Allocator, path: []const u8) !ImageData {
         const file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
-        var stream = std.io.StreamSource{ .file = file };
+        var file_read_buf: [4096]u8 = undefined;
+        var stream = zigimg.io.ReadStream.initFile(file, &file_read_buf);
         return readFromStream(allocator, &stream);
     }
 
     /// Load from a png file using a buffer (which can be provided by @embedFile)
     pub fn fromBuffer(allocator: std.mem.Allocator, buf: []const u8) !ImageData {
-        // var img = try zigimg.Image.fromMemory(allocator, buf);
-        // // defer img.deinit();
-        // const bytes = img.rawBytes();
-        // return try ImageData.fromBytes(
-        //     @as(u32, @intCast(img.width)),
-        //     @as(u32, @intCast(img.height)),
-        //     @as(u32, @intCast(img.rowByteSize())),
-        //     .RGBA,
-        //     bytes,
-        //     allocator,
-        // );
-
-        var stream = std.io.StreamSource{ .const_buffer = std.io.fixedBufferStream(buf) };
+        var stream = zigimg.io.ReadStream.initMemory(buf);
         return readFromStream(allocator, &stream);
     }
 
     // TODO: on WASM, let the browser do the job of loading image data, so we can reduce the WASM bundle size
     // TODO: basically, use <img> on Web
-    pub fn readFromStream(allocator: std.mem.Allocator, stream: *std.io.StreamSource) !ImageData {
+    pub fn readFromStream(allocator: std.mem.Allocator, stream: *zigimg.io.ReadStream) !ImageData {
         var arena = std.heap.ArenaAllocator.init(allocator);
         defer arena.deinit();
 

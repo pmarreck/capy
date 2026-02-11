@@ -15,7 +15,17 @@ peer: win32.HWND,
 arena: std.heap.ArenaAllocator,
 owned_strings: ?[:null]const ?[*:0]const u16 = null,
 
-pub usingnamespace Events(Dropdown);
+const _events = Events(@This());
+pub const process = _events.process;
+pub const setupEvents = _events.setupEvents;
+pub const setUserData = _events.setUserData;
+pub const setCallback = _events.setCallback;
+pub const requestDraw = _events.requestDraw;
+pub const getWidth = _events.getWidth;
+pub const getHeight = _events.getHeight;
+pub const getPreferredSize = _events.getPreferredSize;
+pub const setOpacity = _events.setOpacity;
+pub const deinit = _events.deinit;
 
 pub fn create() !Dropdown {
     const hwnd = win32.CreateWindowExW(win32.WS_EX_LEFT, // dwExtStyle

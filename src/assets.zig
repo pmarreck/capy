@@ -13,17 +13,7 @@ pub const AssetHandle = struct {
         file: std.fs.File,
     },
 
-    // TODO: intersection between file and http error
     pub const ReadError = http.HttpResponse.ReadError || std.fs.File.ReadError;
-    pub const Reader = std.io.Reader(*AssetHandle, ReadError, read);
-
-    pub fn reader(self: *AssetHandle) Reader {
-        return .{ .context = self };
-    }
-
-    pub fn bufferedReader(self: *AssetHandle) std.io.BufferedReader(4096, Reader) {
-        return std.io.bufferedReaderSize(4096, self.reader());
-    }
 
     pub fn read(self: *AssetHandle, dest: []u8) ReadError!usize {
         switch (self.data) {
@@ -32,6 +22,25 @@ pub const AssetHandle = struct {
             },
             .file => |file| {
                 return try file.read(dest);
+            },
+        }
+    }
+
+    /// Read all contents into an allocated buffer
+    pub fn readAllAlloc(self: *AssetHandle, alloc: std.mem.Allocator, max_size: usize) ![]u8 {
+        switch (self.data) {
+            .file => |file| {
+                return try file.readToEndAlloc(alloc, max_size);
+            },
+            .http => {
+                var result = std.ArrayList(u8).empty;
+                var buf: [4096]u8 = undefined;
+                while (true) {
+                    const n = try self.read(&buf);
+                    if (n == 0) break;
+                    try result.appendSlice(alloc, buf[0..n]);
+                }
+                return result.toOwnedSlice(alloc);
             },
         }
     }
@@ -58,13 +67,9 @@ pub fn get(url: []const u8) GetError!AssetHandle {
     log.debug("Loading {s}", .{url});
 
     if (std.mem.eql(u8, uri.scheme, "asset")) {
-        // TODO: on wasm load from the web (in relative path)
-        // TODO: on pc make assets into a bundle and use @embedFile ? this would ease loading times on windows which
-        //       notoriously BAD I/O performance
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
         const cwd_path = try std.fs.realpath(".", &buffer);
 
-        // The URL path as a raw string (without percent-encoding)
         const raw_uri_path = try uri.path.toRawMaybeAlloc(internal.allocator);
         defer internal.allocator.free(raw_uri_path);
 
@@ -78,7 +83,7 @@ pub fn get(url: []const u8) GetError!AssetHandle {
         const raw_uri_path = try uri.path.toRawMaybeAlloc(internal.allocator);
         defer internal.allocator.free(raw_uri_path);
 
-        log.debug("-> {path}", .{uri.path});
+        log.debug("-> {s}", .{raw_uri_path});
         const file = try std.fs.openFileAbsolute(raw_uri_path, .{ .mode = .read_only });
         return AssetHandle{ .data = .{ .file = file } };
     } else if (std.mem.eql(u8, uri.scheme, "http") or std.mem.eql(u8, uri.scheme, "https")) {

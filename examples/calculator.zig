@@ -1,7 +1,5 @@
 const std = @import("std");
 const capy = @import("capy");
-pub usingnamespace capy.cross_platform;
-
 // Short names to avoid writing 'capy.' each time
 const Allocator = std.mem.Allocator;
 

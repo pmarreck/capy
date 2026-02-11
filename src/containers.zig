@@ -8,6 +8,38 @@ const AnimationController = @import("AnimationController.zig");
 const capy = @import("capy.zig");
 
 const isErrorUnion = @import("internal.zig").isErrorUnion;
+
+/// Compat replacement for std.BoundedArray which was removed in Zig 0.15.2.
+fn BoundedArray(comptime T: type, comptime capacity: usize) type {
+    return struct {
+        buffer: [capacity]T = undefined,
+        len: usize = 0,
+
+        const Self = @This();
+
+        pub fn init(_: usize) error{Overflow}!Self {
+            return Self{};
+        }
+
+        pub fn appendAssumeCapacity(self: *Self, item: T) void {
+            self.buffer[self.len] = item;
+            self.len += 1;
+        }
+
+        pub fn append(self: *Self, item: T) error{Overflow}!void {
+            if (self.len >= capacity) return error.Overflow;
+            self.appendAssumeCapacity(item);
+        }
+
+        pub fn constSlice(self: *const Self) []const T {
+            return self.buffer[0..self.len];
+        }
+
+        pub fn slice(self: *Self) []T {
+            return self.buffer[0..self.len];
+        }
+    };
+}
 const convertTupleToWidgets = @import("internal.zig").convertTupleToWidgets;
 
 pub const Layout = *const fn (peer: Callbacks, widgets: []*Widget) void;
@@ -105,7 +137,7 @@ pub fn ColumnLayout(peer: Callbacks, widgets: []*Widget) void {
     }
 
     var peers = std.ArrayList(backend.PeerType).initCapacity(global_allocator, widgets.len) catch return;
-    defer peers.deinit();
+    defer peers.deinit(global_allocator);
 
     for (widgets) |widget| {
         if (widget.peer) |widget_peer| {
@@ -188,7 +220,7 @@ pub fn RowLayout(peer: Callbacks, widgets: []*Widget) void {
     }
 
     var peers = std.ArrayList(backend.PeerType).initCapacity(global_allocator, widgets.len) catch return;
-    defer peers.deinit();
+    defer peers.deinit(global_allocator);
 
     for (widgets) |widget| {
         if (widget.peer) |widget_peer| {
@@ -308,8 +340,8 @@ pub fn GridLayout(peer: Callbacks, widgets: []*Widget) void {
     const MAX_COLUMNS = 10_000;
     const MAX_ROWS = 10_000;
 
-    var columns = std.BoundedArray(GridColumn, MAX_COLUMNS).init(0) catch unreachable;
-    var rows = std.BoundedArray(GridRow, MAX_ROWS).init(0) catch unreachable;
+    var columns = BoundedArray(GridColumn, MAX_COLUMNS).init(0) catch unreachable;
+    var rows = BoundedArray(GridRow, MAX_ROWS).init(0) catch unreachable;
     const config = peer.getLayoutConfig(GridLayoutConfig);
 
     // 1. Columns and rows placement
@@ -399,7 +431,7 @@ pub fn GridLayout(peer: Callbacks, widgets: []*Widget) void {
     // indicates whether the (x,y) spot is filled. The slices are dynamically allocated as otherwise
     // this data structure would take MAX_COLUMNS * MAX_ROWS bytes at least, which can become quite
     // large.
-    var row_fill_tables = std.BoundedArray([]bool, MAX_ROWS).init(0) catch unreachable;
+    var row_fill_tables = BoundedArray([]bool, MAX_ROWS).init(0) catch unreachable;
     defer for (row_fill_tables.constSlice()) |slice| {
         capy.internal.allocator.free(slice);
     };
@@ -519,7 +551,7 @@ pub fn GridLayout(peer: Callbacks, widgets: []*Widget) void {
 
     // 4. Set focus order
     var peers = std.ArrayList(backend.PeerType).initCapacity(global_allocator, widgets.len) catch return;
-    defer peers.deinit();
+    defer peers.deinit(global_allocator);
 
     for (widgets) |widget| {
         if (widget.peer) |widget_peer| {
@@ -532,7 +564,62 @@ pub fn GridLayout(peer: Callbacks, widgets: []*Widget) void {
 }
 
 pub const Container = struct {
-    pub usingnamespace @import("internal.zig").All(Container);
+    const _all = @import("internal.zig").All(@This());
+    pub const WidgetData = _all.WidgetData;
+    pub const WidgetClass = _all.WidgetClass;
+    pub const Atoms = _all.Atoms;
+    pub const Config = _all.Config;
+    pub const Callback = _all.Callback;
+    pub const DrawCallback = _all.DrawCallback;
+    pub const ButtonCallback = _all.ButtonCallback;
+    pub const MouseMoveCallback = _all.MouseMoveCallback;
+    pub const ScrollCallback = _all.ScrollCallback;
+    pub const ResizeCallback = _all.ResizeCallback;
+    pub const KeyTypeCallback = _all.KeyTypeCallback;
+    pub const KeyPressCallback = _all.KeyPressCallback;
+    pub const PropertyChangeCallback = _all.PropertyChangeCallback;
+    pub const Handlers = _all.Handlers;
+    pub const init_events = _all.init_events;
+    pub const setupEvents = _all.setupEvents;
+    pub const addClickHandler = _all.addClickHandler;
+    pub const addDrawHandler = _all.addDrawHandler;
+    pub const addMouseButtonHandler = _all.addMouseButtonHandler;
+    pub const addMouseMotionHandler = _all.addMouseMotionHandler;
+    pub const addScrollHandler = _all.addScrollHandler;
+    pub const addResizeHandler = _all.addResizeHandler;
+    pub const addKeyTypeHandler = _all.addKeyTypeHandler;
+    pub const addKeyPressHandler = _all.addKeyPressHandler;
+    pub const addPropertyChangeHandler = _all.addPropertyChangeHandler;
+    pub const requestDraw = _all.requestDraw;
+    pub const alloc = _all.alloc;
+    pub const ref = _all.ref;
+    pub const unref = _all.unref;
+    pub const showWidget = _all.showWidget;
+    pub const isDisplayedFn = _all.isDisplayedFn;
+    pub const deinitWidget = _all.deinitWidget;
+    pub const getPreferredSizeWidget = _all.getPreferredSizeWidget;
+    pub const getX = _all.getX;
+    pub const getY = _all.getY;
+    pub const getSize = _all.getSize;
+    pub const getWidth = _all.getWidth;
+    pub const getHeight = _all.getHeight;
+    pub const asWidget = _all.asWidget;
+    pub const addUserdata = _all.addUserdata;
+    pub const withUserdata = _all.withUserdata;
+    pub const getUserdata = _all.getUserdata;
+    pub const set = _all.set;
+    pub const get = _all.get;
+    pub const bind = _all.bind;
+    pub const withProperty = _all.withProperty;
+    pub const withBinding = _all.withBinding;
+    pub const getName = _all.getName;
+    pub const setName = _all.setName;
+    pub const getParent = _all.getParent;
+    pub const getRoot = _all.getRoot;
+    pub const getAnimationController = _all.getAnimationController;
+    pub const clone = _all.clone;
+    pub const widget_clone = _all.widget_clone;
+    pub const deinit = _all.deinit;
 
     peer: ?backend.Container,
     widget_data: Container.WidgetData = .{},
@@ -547,7 +634,7 @@ pub const Container = struct {
 
     const LAYOUT_CONFIG_SIZE = 64;
 
-    const atomicValue = if (@hasDecl(std.atomic, "Value")) std.atomic.Value else std.atomic.Atomic; // support zig 0.11 as well as current master
+    const atomicValue = std.atomic.Value;
     pub fn init(children: std.ArrayList(*Widget), config: GridConfig, layout: Layout, layoutConfig: anytype) !Container {
         const LayoutConfig = @TypeOf(layoutConfig);
         comptime std.debug.assert(@sizeOf(LayoutConfig) <= LAYOUT_CONFIG_SIZE);
@@ -558,7 +645,7 @@ pub const Container = struct {
 
         var container = Container.init_events(Container{
             .peer = null,
-            .children = std.ArrayList(*Widget).init(global_allocator),
+            .children = .empty,
             .expand = config.expand == .Fill,
             .layout = layout,
             .layoutConfig = layoutConfigBytes,
@@ -569,7 +656,8 @@ pub const Container = struct {
         for (children.items) |child| {
             try container.add(child);
         }
-        children.deinit();
+        var children_mut = children;
+        children_mut.deinit(global_allocator);
         return container;
     }
 
@@ -707,8 +795,8 @@ pub const Container = struct {
     fn fakeSize(data: usize) Size {
         _ = data;
         return Size{
-            .width = std.math.maxInt(u32) / 2, // divide by 2 to leave some room
-            .height = std.math.maxInt(u32) / 2,
+            .width = std.math.floatMax(f32), // use max f32 as "unlimited"
+            .height = std.math.floatMax(f32),
         };
     }
 
@@ -724,7 +812,7 @@ pub const Container = struct {
         _ = widgets;
     }
 
-    fn getSize(data: usize) Size {
+    fn layoutGetSize(data: usize) Size {
         const peer = @as(*backend.Container, @ptrFromInt(data));
         return Size{ .width = @floatFromInt(peer.getWidth()), .height = @floatFromInt(peer.getHeight()) };
     }
@@ -749,17 +837,17 @@ pub const Container = struct {
             const callbacks = Callbacks{
                 .userdata = @intFromPtr(&peer),
                 .moveResize = moveResize,
-                .getSize = getSize,
+                .getSize = layoutGetSize,
                 .computingPreferredSize = false,
                 .layoutConfig = self.layoutConfig,
                 .setTabOrder = setTabOrder,
             };
 
-            var tempItems = std.ArrayList(*Widget).init(self.children.allocator);
-            defer tempItems.deinit();
+            var tempItems: std.ArrayList(*Widget) = .empty;
+            defer tempItems.deinit(global_allocator);
             for (self.children.items) |child| {
                 if (child.isDisplayed()) {
-                    tempItems.append(child) catch return;
+                    tempItems.append(global_allocator, child) catch return;
                 } else {
                     peer.remove(child.peer.?);
                 }
@@ -789,7 +877,7 @@ pub const Container = struct {
         genericWidget.parent = self.asWidget();
         genericWidget.animation_controller.set(self.widget_data.atoms.animation_controller.get());
         genericWidget.ref();
-        try self.children.append(genericWidget);
+        try self.children.append(global_allocator, genericWidget);
 
         if (self.peer) |*peer| {
             try genericWidget.show();
@@ -833,7 +921,7 @@ pub const Container = struct {
         for (self.children.items) |child| {
             child.unref();
         }
-        self.children.deinit();
+        self.children.deinit(global_allocator);
     }
 
     fn onAnimationControllerChange(newValue: *AnimationController, userdata: ?*anyopaque) void {

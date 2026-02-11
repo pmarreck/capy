@@ -100,7 +100,7 @@ pub fn testFunction(comptime T: type, duration: i64, func: fn (T) anyerror!void)
         }
 
         pub fn deinit(self: Self) void {
-            self.elements.deinit();
+            self.elements.deinit(std.testing.allocator);
         }
     };
 
@@ -115,13 +115,13 @@ pub fn testFunction(comptime T: type, duration: i64, func: fn (T) anyerror!void)
         }
 
         pub fn hypothetize(self: *Self, callback: fn (T) anyerror!void) !Hypothesis {
-            var elements = std.ArrayList(Hypothesis.HypothesisElement).init(std.testing.allocator);
+            var elements: std.ArrayList(Hypothesis.HypothesisElement) = .empty;
             if (comptime trait.isNumber(T)) {
                 std.sort.sort(T, self.items, {}, comptime std.sort.asc(T));
                 const smallest = self.items[0];
                 const biggest = self.items[self.items.len - 1];
-                try elements.append(.{ .BiggerThan = biggest });
-                try elements.append(.{ .SmallerThan = smallest });
+                try elements.append(std.testing.allocator, .{ .BiggerThan = biggest });
+                try elements.append(std.testing.allocator, .{ .SmallerThan = smallest });
             }
 
             var hypothesis = Hypothesis{ .elements = elements };
