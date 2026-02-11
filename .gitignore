@@ -7,3 +7,4 @@ macos-sdk/
 c_examples/libcapy.so.0
 c_examples/c_template
 .direnv
+.serena

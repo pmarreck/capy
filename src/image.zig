@@ -67,8 +67,10 @@ pub const ImageData = struct {
                 &processors,
             ),
         );
-        //defer img.deinit();
-        const bytes = img.rawBytes();
+        defer img.deinit(allocator);
+        const raw_bytes = img.rawBytes();
+        const bytes = try allocator.dupe(u8, raw_bytes);
+        errdefer allocator.free(bytes);
         return try ImageData.fromBytes(
             @as(u32, @intCast(img.width)),
             @as(u32, @intCast(img.height)),

@@ -996,15 +996,18 @@ pub fn ListAtom(comptime T: type) type {
             try std.testing.expectEqual(2, slice.len);
         }
 
-        pub fn map(self: *Self, comptime U: type, func: *const fn (T) U) *ListAtom(U) {
-            _ = self;
-            _ = func;
-            return undefined;
+        pub fn map(self: *Self, comptime U: type, func: *const fn (T) U) ListAtom(U) {
+            self.lock.lockShared();
+            defer self.lock.unlockShared();
+
+            var result = ListAtom(U).init(self.allocator);
+            for (self.backing_list.items) |item| {
+                result.append(func(item)) catch unreachable;
+            }
+            return result;
         }
 
         test map {
-            if (true) return error.SkipZigTest;
-
             var list = ListAtom([]const u8).init(std.testing.allocator);
             defer list.deinit();
 

@@ -2104,6 +2104,7 @@ pub const ImageData = struct {
             bitmap_info,
         );
         if (ctx == null) return error.UnknownError;
+        defer AppKit.CGContextRelease(ctx);
 
         const cg_image = AppKit.CGBitmapContextCreateImage(ctx);
         return ImageData{

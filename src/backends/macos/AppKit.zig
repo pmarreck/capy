@@ -208,6 +208,7 @@ pub extern "c" fn CGColorSpaceRelease(space: CGColorSpaceRef) void;
 
 pub extern "c" fn CGBitmapContextCreate(data: ?*anyopaque, width: usize, height: usize, bitsPerComponent: usize, bytesPerRow: usize, space: CGColorSpaceRef, bitmapInfo: u32) CGContextRef;
 pub extern "c" fn CGBitmapContextCreateImage(ctx: CGContextRef) CGImageRef;
+pub extern "c" fn CGContextRelease(ctx: CGContextRef) void;
 pub extern "c" fn CGImageRelease(image: CGImageRef) void;
 
 // --- CoreText types and externs ---
