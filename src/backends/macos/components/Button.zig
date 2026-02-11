@@ -25,11 +25,18 @@ pub const deinit = _events.deinit;
 
 pub fn create() BackendError!Button {
     const NSButton = objc.getClass("NSButton").?;
-    // const button = NSButton.msgSend(objc.Object, "alloc", .{})
     const button = NSButton.msgSend(objc.Object, "buttonWithTitle:target:action:", .{ AppKit.nsString(""), AppKit.nil, null });
+    const data = try lib.internal.allocator.create(backend.EventUserData);
+    data.* = .{ .peer = button };
+
+    // Wire target/action for click events
+    const actionTarget = try backend.createActionTarget(data);
+    button.msgSend(void, "setTarget:", .{actionTarget.value});
+    button.setProperty("action", objc.sel("action:"));
+
     const peer = backend.GuiWidget{
         .object = button,
-        .data = try lib.internal.allocator.create(backend.EventUserData),
+        .data = data,
     };
     try Button.setupEvents(peer);
     return Button{ .peer = peer };

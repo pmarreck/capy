@@ -42,6 +42,14 @@ fn BoundedArray(comptime T: type, comptime capacity: usize) type {
 }
 const convertTupleToWidgets = @import("internal.zig").convertTupleToWidgets;
 
+/// Safely convert a float to u32 with clamping. Handles NaN, negative values,
+/// and values exceeding u32 range that would otherwise panic in @intFromFloat.
+fn saturatingFloatToU32(val: f32) u32 {
+    if (!(val >= 0)) return 0; // handles NaN and negative
+    if (val >= @as(f32, @floatFromInt(std.math.maxInt(u32)))) return std.math.maxInt(u32);
+    return @intFromFloat(val);
+}
+
 pub const Layout = *const fn (peer: Callbacks, widgets: []*Widget) void;
 const Callbacks = struct {
     userdata: usize,
@@ -131,7 +139,7 @@ pub fn ColumnLayout(peer: Callbacks, widgets: []*Widget) void {
                 }
             };
 
-            peer.moveResize(peer.userdata, widgetPeer, @intFromFloat(childX), @intFromFloat(childY), @intFromFloat(size.width), @intFromFloat(size.height));
+            peer.moveResize(peer.userdata, widgetPeer, saturatingFloatToU32(childX), saturatingFloatToU32(childY), saturatingFloatToU32(size.width), saturatingFloatToU32(size.height));
             childY += size.height + if (isLastWidget) 0 else spacing;
         }
     }
@@ -210,10 +218,10 @@ pub fn RowLayout(peer: Callbacks, widgets: []*Widget) void {
             peer.moveResize(
                 peer.userdata,
                 widgetPeer,
-                @intFromFloat(childX),
-                @intFromFloat(childY),
-                @intFromFloat(size.width),
-                @intFromFloat(size.height),
+                saturatingFloatToU32(childX),
+                saturatingFloatToU32(childY),
+                saturatingFloatToU32(size.width),
+                saturatingFloatToU32(size.height),
             );
             childX += size.width + if (isLastWidget) 0.0 else spacing;
         }
@@ -517,10 +525,10 @@ pub fn GridLayout(peer: Callbacks, widgets: []*Widget) void {
                 peer.moveResize(
                     peer.userdata,
                     widget_peer,
-                    @intFromFloat(grid_column.x),
-                    @intFromFloat(grid_row.y),
-                    @intFromFloat(grid_column.width),
-                    @intFromFloat(grid_row.height),
+                    saturatingFloatToU32(grid_column.x),
+                    saturatingFloatToU32(grid_row.y),
+                    saturatingFloatToU32(grid_column.width),
+                    saturatingFloatToU32(grid_row.height),
                 );
             }
         }
@@ -803,8 +811,10 @@ pub const Container = struct {
     fn fakeResMove(data: usize, widget: backend.PeerType, x: u32, y: u32, w: u32, h: u32) void {
         const size = @as(*Size, @ptrFromInt(data));
         _ = widget;
-        size.width = @max(size.width, @as(f32, @floatFromInt(x + w)));
-        size.height = @max(size.height, @as(f32, @floatFromInt(y + h)));
+        const right = @as(u64, x) + @as(u64, w);
+        const bottom = @as(u64, y) + @as(u64, h);
+        size.width = @max(size.width, @as(f32, @floatFromInt(right)));
+        size.height = @max(size.height, @as(f32, @floatFromInt(bottom)));
     }
 
     fn fakeSetTabOrder(data: usize, widgets: []const backend.PeerType) void {
