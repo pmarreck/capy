@@ -129,16 +129,16 @@ with other DEs.
 ## Supported components
 For now, not every platform supports the same components. So here's a list of the ones that are supported:
 
-|                  |win32|macOS|GTK|Android|wasm|
-|------------------|-----|-----|---|-----|-----|
+|                  |win32|macOS|GTK    |Android|wasm|
+|------------------|-----|-----|-------|-------|-----|
 |Button            |✅|✅|✅|✅|✅|
 |Canvas            |❌|🧪|✅|✅|✅|
 |CheckBox          |✅|🧪|✅|❌|❌|
 |Dropdown          |✅|🧪|✅|❌|❌|
-|Image             |❌|❌|✅|❌|✅|
+|Image             |❌|🧪|✅|❌|✅|
 |Label             |✅|✅|✅|✅|✅|
-|Menu              |❌|❌|❌|❌|❌|
-|Navigation        |❌|❌|❌|❌|❌|
+|Menu              |✅|🧪|✅|❌|❌|
+|Navigation        |❌|❌|✅|❌|❌|
 |NavigationSidebar |❌|🧪|✅|❌|❌|
 |Scrollable        |✅|🧪|✅|❌|❌|
 |Slider            |✅|🧪|✅|❌|✅|

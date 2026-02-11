@@ -132,13 +132,12 @@ pub const Image = struct {
                 if (@errorReturnTrace()) |trace| {
                     std.debug.dumpStackTrace(trace.*);
                 }
+                // Load failed; nothing to draw
+                return;
             };
-
-            // TODO: render a placeholder
-            return;
         }
 
-        const img = self.data.get().?;
+        const img = self.data.get() orelse return;
         switch (self.scaling.get()) {
             .None => {
                 const imgX = @as(i32, @intCast(width / 2)) - @as(i32, @intCast(img.width / 2));

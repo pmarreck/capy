@@ -435,6 +435,63 @@ pub fn createActionTarget(data: *EventUserData) !objc.Object {
     return target;
 }
 
+// --- Menu support ---
+
+var cachedCapyMenuTarget: ?objc.Class = null;
+
+fn getCapyMenuTargetClass() !objc.Class {
+    if (cachedCapyMenuTarget) |cls| return cls;
+
+    const NSObjectClass = objc.getClass("NSObject").?;
+    const CapyMenuTarget = objc.allocateClassPair(NSObjectClass, "CapyMenuTarget") orelse return error.InitializationError;
+
+    // Add an ivar to store the callback function pointer
+    if (!CapyMenuTarget.addIvar("capy_menu_callback")) return error.InitializationError;
+
+    _ = CapyMenuTarget.addMethod("menuAction:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, _: objc.c.id) callconv(.c) void {
+            const self_obj = objc.Object{ .value = self_id };
+            const raw = self_obj.getInstanceVariable("capy_menu_callback");
+            const cb_ptr = @intFromPtr(raw.value);
+            if (cb_ptr == 0) return;
+            const callback: *const fn () void = @ptrFromInt(cb_ptr);
+            callback();
+        }
+    }.imp);
+
+    objc.registerClassPair(CapyMenuTarget);
+    cachedCapyMenuTarget = CapyMenuTarget;
+    return CapyMenuTarget;
+}
+
+fn createMenuItemFromConfig(item: lib.MenuItem, menu_target_cls: objc.Class) objc.Object {
+    const NSMenuItem = objc.getClass("NSMenuItem").?;
+    const NSMenu = objc.getClass("NSMenu").?;
+
+    const ns_item = NSMenuItem.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+    ns_item.msgSend(void, "setTitle:", .{AppKit.nsString(item.config.label)});
+
+    if (item.items.len > 0) {
+        // This is a submenu
+        const submenu = NSMenu.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        submenu.msgSend(void, "setTitle:", .{AppKit.nsString(item.config.label)});
+        for (item.items) |sub_item| {
+            const child = createMenuItemFromConfig(sub_item, menu_target_cls);
+            submenu.msgSend(void, "addItem:", .{child.value});
+        }
+        ns_item.msgSend(void, "setSubmenu:", .{submenu.value});
+    } else if (item.config.onClick) |callback| {
+        // Leaf menu item with a click handler
+        const target = menu_target_cls.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        // Store callback function pointer in the ivar
+        target.setInstanceVariable("capy_menu_callback", objc.Object{ .value = @ptrFromInt(@intFromPtr(callback)) });
+        ns_item.msgSend(void, "setTarget:", .{target.value});
+        ns_item.setProperty("action", objc.sel("menuAction:"));
+    }
+
+    return ns_item;
+}
+
 // ---------------------------------------------------------------------------
 // CapyTextFieldDelegate - for text change notifications on NSTextField
 // ---------------------------------------------------------------------------
@@ -982,8 +1039,33 @@ pub const Window = struct {
 
     pub fn setMenuBar(self: *Window, bar: anytype) void {
         _ = self;
-        _ = bar;
-        // TODO: implement NSMenu on macOS
+        const NSMenu = objc.getClass("NSMenu") orelse return;
+        const menu_target_cls = getCapyMenuTargetClass() catch return;
+
+        const menubar = NSMenu.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+
+        // Always add the application menu with Quit as the first item
+        const NSMenuItem = objc.getClass("NSMenuItem") orelse return;
+        const app_menu_item = NSMenuItem.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        menubar.msgSend(void, "addItem:", .{app_menu_item.value});
+
+        const app_menu = NSMenu.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        const quit_item = NSMenuItem.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        quit_item.msgSend(void, "setTitle:", .{AppKit.nsString("Quit")});
+        quit_item.setProperty("action", objc.sel("terminate:"));
+        quit_item.msgSend(void, "setKeyEquivalent:", .{AppKit.nsString("q")});
+        app_menu.msgSend(void, "addItem:", .{quit_item.value});
+        app_menu_item.msgSend(void, "setSubmenu:", .{app_menu.value});
+
+        // Add user-defined menus
+        for (bar.menus) |menu_item| {
+            const item = createMenuItemFromConfig(menu_item, menu_target_cls);
+            menubar.msgSend(void, "addItem:", .{item.value});
+        }
+
+        // Set as application's main menu
+        const app = objc.getClass("NSApplication").?.msgSend(objc.Object, "sharedApplication", .{});
+        app.msgSend(void, "setMainMenu:", .{menubar.value});
     }
 
     pub fn setFullscreen(self: *Window, monitor: anytype, video_mode: anytype) void {
@@ -1292,13 +1374,14 @@ pub const Canvas = struct {
         }
 
         pub fn image(self: *DrawContextImpl, x: i32, y: i32, w: u32, h: u32, data: lib.ImageData) void {
-            _ = self;
-            _ = x;
-            _ = y;
-            _ = w;
-            _ = h;
-            _ = data;
-            // TODO: implement image drawing with CGContextDrawImage
+            const cg_image = data.peer.cg_image orelse return;
+            const rect = AppKit.CGRect.make(
+                @floatFromInt(x),
+                @floatFromInt(y),
+                @floatFromInt(w),
+                @floatFromInt(h),
+            );
+            AppKit.CGContextDrawImage(self.cg_context, rect, cg_image);
         }
 
         pub fn clear(self: *DrawContextImpl, x: u32, y: u32, w: u32, h: u32) void {
@@ -1659,15 +1742,18 @@ pub const TextArea = struct {
     }
 
     pub fn setMonospaced(self: *TextArea, monospaced: bool) void {
-        if (monospaced) {
-            const NSFont = objc.getClass("NSFont") orelse return;
-            const font = NSFont.msgSend(objc.Object, "monospacedSystemFontOfSize:weight:", .{
+        const NSFont = objc.getClass("NSFont") orelse return;
+        const font = if (monospaced)
+            NSFont.msgSend(objc.Object, "monospacedSystemFontOfSize:weight:", .{
                 @as(AppKit.CGFloat, 13.0),
                 @as(AppKit.CGFloat, 0.0),
+            })
+        else
+            NSFont.msgSend(objc.Object, "systemFontOfSize:", .{
+                @as(AppKit.CGFloat, 13.0),
             });
-            if (font.value != null) {
-                self.text_view.msgSend(void, "setFont:", .{font});
-            }
+        if (font.value != null) {
+            self.text_view.msgSend(void, "setFont:", .{font});
         }
     }
 };

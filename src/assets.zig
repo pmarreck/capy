@@ -5,7 +5,7 @@ const internal = @import("internal.zig");
 const log = std.log.scoped(.assets);
 const Uri = std.Uri;
 
-const GetError = Uri.ParseError || http.SendRequestError || error{UnsupportedScheme} || std.mem.Allocator.Error;
+const GetError = Uri.ParseError || http.SendRequestError || error{ UnsupportedScheme, InvalidPath } || std.mem.Allocator.Error;
 
 pub const AssetHandle = struct {
     data: union(enum) {
@@ -70,8 +70,8 @@ pub fn get(url: []const u8) GetError!AssetHandle {
         var buffer: [std.fs.max_path_bytes]u8 = undefined;
         const cwd_path = try std.fs.realpath(".", &buffer);
 
-        const raw_uri_path = try uri.path.toRawMaybeAlloc(internal.allocator);
-        defer internal.allocator.free(raw_uri_path);
+        var raw_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        const raw_uri_path = uri.path.toRaw(&raw_path_buf) catch return error.InvalidPath;
 
         const asset_path = try std.fs.path.join(internal.allocator, &.{ cwd_path, "assets/", raw_uri_path });
         defer internal.allocator.free(asset_path);
@@ -80,8 +80,8 @@ pub fn get(url: []const u8) GetError!AssetHandle {
         const file = try std.fs.openFileAbsolute(asset_path, .{ .mode = .read_only });
         return AssetHandle{ .data = .{ .file = file } };
     } else if (std.mem.eql(u8, uri.scheme, "file")) {
-        const raw_uri_path = try uri.path.toRawMaybeAlloc(internal.allocator);
-        defer internal.allocator.free(raw_uri_path);
+        var raw_path_buf2: [std.fs.max_path_bytes]u8 = undefined;
+        const raw_uri_path = uri.path.toRaw(&raw_path_buf2) catch return error.InvalidPath;
 
         log.debug("-> {s}", .{raw_uri_path});
         const file = try std.fs.openFileAbsolute(raw_uri_path, .{ .mode = .read_only });
