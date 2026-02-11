@@ -51,6 +51,10 @@ pub const TBM_GETPOS = 0x0400;
 pub const TBM_SETRANGE = 0x0406;
 pub const TBM_SETRANGEMIN = 0x0407;
 pub const TBM_SETRANGEMAX = 0x0408;
+pub const TBM_SETTIC = 0x0404;
+pub const TBM_SETTICFREQ = 0x0414;
+pub const TBM_CLEARTICS = 0x0409;
+pub const TBS_AUTOTICKS: u32 = 0x0001;
 
 // STATIC controls
 /// Centers text horizontally.

@@ -26,6 +26,8 @@ pub const deinit = _events.deinit;
 pub fn create() BackendError!Button {
     const NSButton = objc.getClass("NSButton").?;
     const button = NSButton.msgSend(objc.Object, "buttonWithTitle:target:action:", .{ AppKit.nsString(""), AppKit.nil, null });
+    // Accept keyboard focus so Space/Enter activates the button
+    button.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(false))});
     const data = try lib.internal.allocator.create(backend.EventUserData);
     data.* = .{ .peer = button };
 

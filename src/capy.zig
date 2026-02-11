@@ -19,6 +19,9 @@ pub const rect = @import("components/Canvas.zig").rect;
 pub const CheckBox = @import("components/CheckBox.zig").CheckBox;
 pub const checkBox = @import("components/CheckBox.zig").checkBox;
 
+pub const RadioButton = @import("components/RadioButton.zig").RadioButton;
+pub const radioButton = @import("components/RadioButton.zig").radioButton;
+
 pub const Dropdown = @import("components/Dropdown.zig").Dropdown;
 pub const dropdown = @import("components/Dropdown.zig").dropdown;
 

@@ -88,3 +88,26 @@ pub fn setOrientation(self: *Slider, orientation: lib.Orientation) void {
     };
     c.gtk_orientable_set_orientation(@as(*c.GtkOrientable, @ptrCast(self.peer)), gtkOrientation);
 }
+
+pub fn setTickCount(self: *Slider, count: u32) void {
+    const scale: *c.GtkScale = @ptrCast(self.peer);
+    c.gtk_scale_clear_marks(scale);
+    if (count > 1) {
+        const adjustment = c.gtk_range_get_adjustment(@as(*c.GtkRange, @ptrCast(self.peer)));
+        const min_val = c.gtk_adjustment_get_lower(adjustment);
+        const max_val = c.gtk_adjustment_get_upper(adjustment) - c.gtk_adjustment_get_step_increment(adjustment);
+        const step = (max_val - min_val) / @as(f64, @floatFromInt(count - 1));
+        for (0..count) |i| {
+            const mark_value = min_val + step * @as(f64, @floatFromInt(i));
+            c.gtk_scale_add_mark(scale, mark_value, c.GTK_POS_BOTTOM, null);
+        }
+    }
+}
+
+pub fn setSnapToTicks(self: *Slider, snap: bool) void {
+    _ = self;
+    _ = snap;
+    // GTK doesn't have native snap-to-tick. The existing gtkValueChanged
+    // callback already rounds to the step size, which provides snapping
+    // when step is set to match tick intervals.
+}

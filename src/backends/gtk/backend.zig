@@ -62,6 +62,7 @@ pub const Monitor = @import("Monitor.zig");
 pub const Window = @import("Window.zig");
 pub const Button = @import("Button.zig");
 pub const CheckBox = @import("CheckBox.zig");
+pub const RadioButton = @import("RadioButton.zig");
 pub const Dropdown = @import("Dropdown.zig");
 pub const Slider = @import("Slider.zig");
 pub const Label = @import("Label.zig");

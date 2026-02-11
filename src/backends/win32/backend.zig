@@ -1249,6 +1249,74 @@ pub const CheckBox = struct {
     }
 };
 
+pub const RadioButton = struct {
+    peer: HWND,
+    arena: std.heap.ArenaAllocator,
+
+    const _events = Events(@This());
+    pub const process = _events.process;
+    pub const setupEvents = _events.setupEvents;
+    pub const setUserData = _events.setUserData;
+    pub const setCallback = _events.setCallback;
+    pub const requestDraw = _events.requestDraw;
+    pub const getWidth = _events.getWidth;
+    pub const getHeight = _events.getHeight;
+    pub const getPreferredSize = _events.getPreferredSize;
+    pub const setOpacity = _events.setOpacity;
+    pub const deinit = _events.deinit;
+
+    pub fn create() !RadioButton {
+        const hwnd = win32.CreateWindowExW(win32.WS_EX_LEFT,
+            L("BUTTON"),
+            L(""),
+            @as(win32.WINDOW_STYLE, @enumFromInt(@intFromEnum(win32.WS_TABSTOP) | @intFromEnum(win32.WS_CHILD) | win32Backend.BS_AUTORADIOBUTTON)),
+            0, 0, 100, 100,
+            defaultWHWND,
+            null,
+            hInst,
+            null,
+        ) orelse return Win32Error.InitializationError;
+        try RadioButton.setupEvents(hwnd);
+        _ = win32.SendMessageW(hwnd, win32.WM_SETFONT, @intFromPtr(captionFont), 1);
+
+        return RadioButton{ .peer = hwnd, .arena = std.heap.ArenaAllocator.init(lib.internal.allocator) };
+    }
+
+    pub fn setLabel(self: *RadioButton, label: [:0]const u8) void {
+        const allocator = lib.internal.allocator;
+        const wide = std.unicode.utf8ToUtf16LeAllocZ(allocator, label) catch return;
+        defer allocator.free(wide);
+        if (win32.SetWindowTextW(self.peer, wide) == 0) {
+            std.os.windows.unexpectedError(transWinError(win32.GetLastError())) catch {};
+        }
+    }
+
+    pub fn setEnabled(self: *RadioButton, enabled: bool) void {
+        _ = win32.EnableWindow(self.peer, @intFromBool(enabled));
+    }
+
+    pub fn setChecked(self: *RadioButton, checked: bool) void {
+        const state: win32.WPARAM = switch (checked) {
+            true => @intFromEnum(win32.BST_CHECKED),
+            false => @intFromEnum(win32.BST_UNCHECKED),
+        };
+        _ = win32.SendMessageW(self.peer, win32.BM_SETCHECK, state, 0);
+    }
+
+    pub fn isChecked(self: *RadioButton) bool {
+        const state: win32.DLG_BUTTON_CHECK_STATE = @enumFromInt(
+            win32.SendMessageW(self.peer, win32.BM_GETCHECK, 0, 0),
+        );
+        return state != win32.BST_UNCHECKED;
+    }
+
+    pub fn setGroup(self: *RadioButton, group_leader: *const RadioButton) void {
+        // Win32 auto-manages radio button groups within a parent window.
+        _ = self;
+        _ = group_leader;
+    }
+};
+
 pub const Slider = struct {
     peer: HWND,
     min: f32 = 0,
@@ -1324,6 +1392,24 @@ pub const Slider = struct {
 
     pub fn setEnabled(self: *Slider, enabled: bool) void {
         _ = win32.EnableWindow(self.peer, @intFromBool(enabled));
+    }
+
+    pub fn setTickCount(self: *Slider, count: u32) void {
+        // Clear existing ticks
+        _ = win32.SendMessageW(self.peer, win32Backend.TBM_CLEARTICS, 1, 0);
+        if (count > 1) {
+            // Set tick frequency based on the range and tick count
+            const range = @as(i32, @intFromFloat((self.max - self.min) / self.stepSize));
+            const freq = @divTrunc(range, @as(i32, @intCast(count - 1)));
+            _ = win32.SendMessageW(self.peer, win32Backend.TBM_SETTICFREQ, freq, 0);
+        }
+    }
+
+    pub fn setSnapToTicks(self: *Slider, snap: bool) void {
+        _ = self;
+        _ = snap;
+        // Win32 trackbar snaps to step size already via integer positions.
+        // Snap-to-tick is handled at the component level by adjusting step size.
     }
 };
 

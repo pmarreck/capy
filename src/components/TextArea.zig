@@ -68,6 +68,9 @@ pub const TextArea = struct {
     widget_data: TextArea.WidgetData = .{},
     /// The text this TextArea contains.
     text: Atom([]const u8) = Atom([]const u8).of(""),
+    /// Owned copy of text from the backend (guards against backends returning
+    /// temporary pointers, e.g. NSString's UTF8String on macOS).
+    text_alloc: ?[]u8 = null,
 
     // TODO: replace with TextArea.setFont(.{ .family = "monospace" }) ?
     /// Whether to let the system choose a monospace font for us and use it in this TextArea..
@@ -97,7 +100,12 @@ pub const TextArea = struct {
     fn textChanged(userdata: usize) void {
         const self = @as(*TextArea, @ptrFromInt(userdata));
         const text = self.peer.?.getText();
-        self.text.set(text);
+        // Copy text into owned memory so the Atom doesn't hold a dangling
+        // pointer (macOS backend returns a temporary NSString UTF8String buffer).
+        const owned = internal.allocator.dupe(u8, text) catch return;
+        if (self.text_alloc) |prev| internal.allocator.free(prev);
+        self.text_alloc = owned;
+        self.text.set(owned);
     }
 
     pub fn show(self: *TextArea) !void {

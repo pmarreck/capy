@@ -70,6 +70,9 @@ pub const TextField = struct {
     text: Atom([]const u8) = Atom([]const u8).of(""),
     /// Whether the TextField is read-only
     readOnly: Atom(bool) = Atom(bool).of(false),
+    /// Owned copy of text from the backend (guards against backends returning
+    /// temporary pointers, e.g. NSString's UTF8String on macOS).
+    text_alloc: ?[]u8 = null,
 
     pub fn init(config: TextField.Config) TextField {
         var field = TextField.init_events(TextField{});
@@ -92,7 +95,12 @@ pub const TextField = struct {
     fn textChanged(userdata: usize) void {
         const self: *TextField = @ptrFromInt(userdata);
         const text = self.peer.?.getText();
-        self.text.set(text);
+        // Copy text into owned memory so the Atom doesn't hold a dangling
+        // pointer (macOS backend returns a temporary NSString UTF8String buffer).
+        const owned = internal.allocator.dupe(u8, text) catch return;
+        if (self.text_alloc) |prev| internal.allocator.free(prev);
+        self.text_alloc = owned;
+        self.text.set(owned);
     }
 
     pub fn show(self: *TextField) !void {

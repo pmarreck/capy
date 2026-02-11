@@ -838,6 +838,74 @@ fn maxSubviewExtent(view: objc.Object) struct { width: AppKit.CGFloat, height: A
     return .{ .width = max_w, .height = max_h };
 }
 
+/// Recursively collect interactive (focusable) controls from the view hierarchy.
+/// A view is considered interactive if it's an editable NSTextField, NSButton,
+/// NSSlider, or NSPopUpButton. Container views and labels are skipped.
+/// Views are collected in subview order (which matches layout insertion order:
+/// top-to-bottom for columns, left-to-right for rows).
+fn collectFocusableViews(view: objc.Object, out: *std.ArrayList(objc.Object)) void {
+    const subviews = view.msgSend(objc.Object, "subviews", .{});
+    const count: usize = @intCast(subviews.msgSend(u64, "count", .{}));
+
+    for (0..count) |i| {
+        const subview = subviews.msgSend(objc.Object, "objectAtIndex:", .{@as(u64, @intCast(i))});
+
+        // Check if this is an interactive control (not a container or label)
+        const NSButtonClass = objc.getClass("NSButton");
+        const NSTextFieldClass = objc.getClass("NSTextField");
+        const NSSliderClass = objc.getClass("NSSlider");
+        const NSPopUpButtonClass = objc.getClass("NSPopUpButton");
+
+        const is_button = if (NSButtonClass) |cls| subview.msgSend(u8, "isKindOfClass:", .{cls}) != 0 else false;
+        const is_textfield = if (NSTextFieldClass) |cls| subview.msgSend(u8, "isKindOfClass:", .{cls}) != 0 else false;
+        const is_slider = if (NSSliderClass) |cls| subview.msgSend(u8, "isKindOfClass:", .{cls}) != 0 else false;
+        const is_popup = if (NSPopUpButtonClass) |cls| subview.msgSend(u8, "isKindOfClass:", .{cls}) != 0 else false;
+
+        if (is_popup) {
+            // NSPopUpButton is a subclass of NSButton, check it first
+            out.append(lib.internal.allocator, subview) catch {};
+        } else if (is_button) {
+            out.append(lib.internal.allocator, subview) catch {};
+        } else if (is_slider) {
+            out.append(lib.internal.allocator, subview) catch {};
+        } else if (is_textfield) {
+            // Only include editable text fields (not labels)
+            const is_editable = subview.msgSend(u8, "isEditable", .{}) != 0;
+            if (is_editable) {
+                out.append(lib.internal.allocator, subview) catch {};
+            }
+            // Labels: skip (don't recurse either, labels have no focusable children)
+        } else {
+            // Container or unknown view: recurse into children
+            collectFocusableViews(subview, out);
+        }
+    }
+}
+
+/// Build the key view loop for Tab/Shift-Tab navigation.
+/// Walks the view hierarchy to find only interactive controls and chains
+/// them via nextKeyView, forming a cycle.
+fn buildKeyViewLoop(window: objc.Object) void {
+    const content_view = window.msgSend(objc.Object, "contentView", .{});
+    if (@intFromPtr(content_view.value) == 0) return;
+
+    var focusable: std.ArrayList(objc.Object) = .empty;
+    defer focusable.deinit(lib.internal.allocator);
+
+    collectFocusableViews(content_view, &focusable);
+
+    if (focusable.items.len < 2) return;
+
+    // Chain each view to the next, with wrap-around
+    for (0..focusable.items.len) |i| {
+        const next_i = if (i + 1 < focusable.items.len) i + 1 else 0;
+        focusable.items[i].msgSend(void, "setNextKeyView:", .{focusable.items[next_i].value});
+    }
+
+    // Note: we intentionally don't call setInitialFirstResponder: here
+    // as it can interfere with the window becoming key.
+}
+
 /// Expand the window if its content's natural size exceeds the current
 /// content area. Mimics GTK's auto-expansion from gtk_window_set_default_size.
 fn expandWindowToFitContent(window: objc.Object) void {
@@ -903,6 +971,140 @@ fn syncChildToContentView(window: objc.Object) void {
     }
 }
 
+// CapyWindow - NSWindow subclass that intercepts Tab/Shift-Tab to manually
+// navigate the key view chain, bypassing macOS's canBecomeKeyView checks
+// which normally require Full Keyboard Access to be enabled in System Settings.
+var cachedCapyWindow: ?objc.Class = null;
+
+fn getCapyWindowClass() !objc.Class {
+    if (cachedCapyWindow) |cls| return cls;
+
+    const NSWindowClass = objc.getClass("NSWindow").?;
+    const cls = objc.allocateClassPair(NSWindowClass, "CapyWindow") orelse return error.InitializationError;
+
+    // Override sendEvent: to intercept Tab and Shift-Tab
+    _ = cls.addMethod("sendEvent:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, event_id: objc.c.id) callconv(.c) void {
+            const event = objc.Object{ .value = event_id };
+            const self_obj = objc.Object{ .value = self_id };
+
+            // NSEventTypeKeyDown = 10
+            const event_type: u64 = event.msgSend(u64, "type", .{});
+            if (event_type == 10) {
+                // Check for Tab character (0x09)
+                const chars = event.msgSend(objc.Object, "characters", .{});
+                const len: u64 = chars.msgSend(u64, "length", .{});
+                if (len == 1) {
+                    const ch: u16 = chars.msgSend(u16, "characterAtIndex:", .{@as(u64, 0)});
+                    // Tab = 0x09, Backtab (Shift-Tab) = 0x19
+                    if (ch == 0x09 or ch == 0x19) {
+                        const shift_held = (ch == 0x19);
+
+                        const first_responder = self_obj.msgSend(objc.Object, "firstResponder", .{});
+                        if (@intFromPtr(first_responder.value) != 0) {
+                            // For text fields, the first responder is the field editor (NSTextView),
+                            // not the NSTextField itself. Get the actual delegate.
+                            var current_view = first_responder;
+                            const NSTextViewClass = objc.getClass("NSTextView");
+                            if (NSTextViewClass) |tvc| {
+                                if (current_view.msgSend(u8, "isKindOfClass:", .{tvc}) != 0) {
+                                    // Field editor: get the delegate which is the NSTextField
+                                    const delegate = current_view.msgSend(objc.Object, "delegate", .{});
+                                    if (@intFromPtr(delegate.value) != 0) {
+                                        current_view = delegate;
+                                    }
+                                }
+                            }
+
+                            const next_view = if (shift_held)
+                                current_view.msgSend(objc.Object, "previousKeyView", .{})
+                            else
+                                current_view.msgSend(objc.Object, "nextKeyView", .{});
+
+                            if (@intFromPtr(next_view.value) != 0) {
+                                _ = self_obj.msgSend(u8, "makeFirstResponder:", .{next_view.value});
+                                return; // Consume the event
+                            }
+                        }
+                    }
+
+                    // Arrow keys on focused slider: adjust value
+                    // Left=0xF702, Right=0xF703, Up=0xF700, Down=0xF701
+                    if (ch == 0xF700 or ch == 0xF701 or ch == 0xF702 or ch == 0xF703) {
+                        const first_responder = self_obj.msgSend(objc.Object, "firstResponder", .{});
+                        if (@intFromPtr(first_responder.value) != 0) {
+                            const NSSliderClass = objc.getClass("NSSlider");
+                            if (NSSliderClass) |slider_cls| {
+                                if (first_responder.msgSend(u8, "isKindOfClass:", .{slider_cls}) != 0) {
+                                    const is_vertical: u8 = first_responder.msgSend(u8, "isVertical", .{});
+                                    const cur: f64 = first_responder.msgSend(f64, "doubleValue", .{});
+                                    const min_v: f64 = first_responder.msgSend(f64, "minValue", .{});
+                                    const max_v: f64 = first_responder.msgSend(f64, "maxValue", .{});
+                                    const num_ticks: i64 = first_responder.msgSend(i64, "numberOfTickMarks", .{});
+                                    // Step: use tick interval if available, otherwise 1% of range
+                                    const step: f64 = if (num_ticks > 1)
+                                        (max_v - min_v) / @as(f64, @floatFromInt(num_ticks - 1))
+                                    else
+                                        (max_v - min_v) / 100.0;
+                                    // Determine direction based on key and orientation
+                                    const increase = if (is_vertical != 0)
+                                        (ch == 0xF700) // Up increases for vertical
+                                    else
+                                        (ch == 0xF703); // Right increases for horizontal
+                                    const decrease = if (is_vertical != 0)
+                                        (ch == 0xF701) // Down decreases for vertical
+                                    else
+                                        (ch == 0xF702); // Left decreases for horizontal
+                                    if (increase or decrease) {
+                                        var new_val = if (increase) cur + step else cur - step;
+                                        // Clamp to range
+                                        if (new_val < min_v) new_val = min_v;
+                                        if (new_val > max_v) new_val = max_v;
+                                        first_responder.msgSend(void, "setDoubleValue:", .{new_val});
+                                        // Trigger the action to update the Capy component
+                                        // Use NSApp sendAction:to:from: since we have a raw SEL
+                                        if (objc.getClass("NSApplication")) |nsapp| {
+                                            const app = nsapp.msgSend(objc.Object, "sharedApplication", .{});
+                                            _ = app.msgSend(u8, "sendAction:to:from:", .{
+                                                first_responder.msgSend(objc.c.SEL, "action", .{}),
+                                                first_responder.msgSend(objc.Object, "target", .{}).value,
+                                                first_responder.value,
+                                            });
+                                        }
+                                        return; // Consume the event
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Space (0x20) or Return (0x0D) or Enter (0x03): activate focused control
+                    if (ch == 0x20 or ch == 0x0D or ch == 0x03) {
+                        const first_responder = self_obj.msgSend(objc.Object, "firstResponder", .{});
+                        if (@intFromPtr(first_responder.value) != 0) {
+                            const NSControlClass = objc.getClass("NSControl");
+                            if (NSControlClass) |ctrl_cls| {
+                                if (first_responder.msgSend(u8, "isKindOfClass:", .{ctrl_cls}) != 0) {
+                                    first_responder.msgSend(void, "performClick:", .{self_obj.value});
+                                    return; // Consume the event
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // For all other events, call super's sendEvent:
+            const SuperClass = objc.getClass("NSWindow").?;
+            self_obj.msgSendSuper(SuperClass, void, "sendEvent:", .{event});
+        }
+    }.imp);
+
+    objc.registerClassPair(cls);
+    cachedCapyWindow = cls;
+    return cls;
+}
+
 // CapyWindowDelegate - receives windowDidResize: notifications
 var cachedCapyWindowDelegate: ?objc.Class = null;
 
@@ -957,12 +1159,12 @@ pub const Window = struct {
     }
 
     pub fn create() BackendError!Window {
-        const NSWindow = objc.getClass("NSWindow").?;
+        const CapyWindow = try getCapyWindowClass();
         const rect = AppKit.NSRect.make(0, 0, 800, 600);
         const style = AppKit.NSWindowStyleMask.Titled | AppKit.NSWindowStyleMask.Closable | AppKit.NSWindowStyleMask.Miniaturizable | AppKit.NSWindowStyleMask.Resizable;
         const flag: u8 = @intFromBool(false);
 
-        const window = NSWindow.msgSend(objc.Object, "alloc", .{});
+        const window = CapyWindow.msgSend(objc.Object, "alloc", .{});
         _ = window.msgSend(
             objc.Object,
             "initWithContentRect:styleMask:backing:defer:",
@@ -1028,8 +1230,15 @@ pub const Window = struct {
         // window expands to accommodate its content's natural size.
         expandWindowToFitContent(self.peer.object);
 
+        // Center window on screen as a sensible default
+        self.peer.object.msgSend(void, "center", .{});
+
         self.peer.object.msgSend(void, "makeKeyAndOrderFront:", .{self.peer.object.value});
         _ = activeWindows.fetchAdd(1, .release);
+
+        // Build the key view loop for Tab/Shift-Tab navigation AFTER
+        // the window is key, including only interactive controls
+        buildKeyViewLoop(self.peer.object);
     }
 
     pub fn close(self: *Window) void {
@@ -1149,8 +1358,12 @@ pub const Container = struct {
     }
 
     pub fn setTabOrder(self: *const Container, peers: []const GuiWidget) void {
-        _ = peers;
+        // No-op on macOS: we use autorecalculatesKeyViewLoop on NSWindow instead,
+        // which builds a single flat key view chain from the entire view hierarchy
+        // based on geometric position (top-to-bottom, left-to-right).
+        // Per-container loops would conflict with the global chain.
         _ = self;
+        _ = peers;
     }
 };
 
@@ -1531,6 +1744,8 @@ pub const Label = struct {
     pub fn create() !Label {
         const NSTextField = objc.getClass("NSTextField").?;
         const label = NSTextField.msgSend(objc.Object, "labelWithString:", .{AppKit.nsString("")});
+        // Labels should never steal keyboard focus
+        label.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(true))});
         const data = try lib.internal.allocator.create(EventUserData);
         data.* = EventUserData{ .peer = label };
         return Label{
@@ -1785,6 +2000,8 @@ pub const CheckBox = struct {
             .msgSend(objc.Object, "initWithFrame:", .{AppKit.NSRect.make(0, 0, 100, 22)});
         button.msgSend(void, "setButtonType:", .{@as(AppKit.NSUInteger, AppKit.NSButtonType.Switch)});
         button.setProperty("title", AppKit.nsString(""));
+        // Accept keyboard focus so Space activates the control
+        button.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(false))});
 
         const data = try lib.internal.allocator.create(EventUserData);
         data.* = EventUserData{ .peer = button };
@@ -1828,6 +2045,83 @@ pub const CheckBox = struct {
 };
 
 // ---------------------------------------------------------------------------
+// RadioButton
+// ---------------------------------------------------------------------------
+
+pub const RadioButton = struct {
+    peer: GuiWidget,
+    action_target: ?objc.Object = null,
+
+    const _events = Events(@This());
+    pub const setupEvents = _events.setupEvents;
+    pub const setUserData = _events.setUserData;
+    pub const setCallback = _events.setCallback;
+    pub const setOpacity = _events.setOpacity;
+    pub const getX = _events.getX;
+    pub const getY = _events.getY;
+    pub const getWidth = _events.getWidth;
+    pub const getHeight = _events.getHeight;
+    pub const getPreferredSize = _events.getPreferredSize;
+    pub const requestDraw = _events.requestDraw;
+    pub const deinit = _events.deinit;
+
+    pub fn create() BackendError!RadioButton {
+        const NSButton = objc.getClass("NSButton").?;
+        const button = NSButton.msgSend(objc.Object, "alloc", .{})
+            .msgSend(objc.Object, "initWithFrame:", .{AppKit.NSRect.make(0, 0, 100, 22)});
+        button.msgSend(void, "setButtonType:", .{@as(AppKit.NSUInteger, AppKit.NSButtonType.Radio)});
+        button.setProperty("title", AppKit.nsString(""));
+        button.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(false))});
+
+        const data = try lib.internal.allocator.create(EventUserData);
+        data.* = EventUserData{ .peer = button };
+
+        const target = try createActionTarget(data);
+        button.setProperty("target", target);
+        button.setProperty("action", objc.sel("action:"));
+
+        return RadioButton{
+            .peer = GuiWidget{
+                .object = button,
+                .data = data,
+            },
+            .action_target = target,
+        };
+    }
+
+    pub fn setChecked(self: *RadioButton, checked: bool) void {
+        self.peer.object.setProperty("state", @as(i64, if (checked) AppKit.NSControlStateValue.On else AppKit.NSControlStateValue.Off));
+    }
+
+    pub fn isChecked(self: *RadioButton) bool {
+        const state: i64 = self.peer.object.getProperty(i64, "state");
+        return state == AppKit.NSControlStateValue.On;
+    }
+
+    pub fn setEnabled(self: *RadioButton, enabled: bool) void {
+        self.peer.object.setProperty("enabled", @as(u8, @intFromBool(enabled)));
+    }
+
+    pub fn setLabel(self: *RadioButton, label_text: [:0]const u8) void {
+        self.peer.object.setProperty("title", AppKit.nsString(label_text.ptr));
+    }
+
+    pub fn getLabel(self: *RadioButton) [:0]const u8 {
+        const title = self.peer.object.getProperty(objc.Object, "title");
+        if (title.value == null) return "";
+        const label = title.msgSend([*:0]const u8, "UTF8String", .{});
+        return std.mem.sliceTo(label, 0);
+    }
+
+    pub fn setGroup(self: *RadioButton, group_leader: *const RadioButton) void {
+        // macOS doesn't have native radio button grouping.
+        // Mutual exclusivity is managed at the component level.
+        _ = self;
+        _ = group_leader;
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Slider
 // ---------------------------------------------------------------------------
 
@@ -1855,6 +2149,7 @@ pub const Slider = struct {
         slider.setProperty("minValue", @as(AppKit.CGFloat, 0.0));
         slider.setProperty("maxValue", @as(AppKit.CGFloat, 1.0));
         slider.setProperty("continuous", @as(u8, @intFromBool(true)));
+        slider.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(false))});
 
         const data = try lib.internal.allocator.create(EventUserData);
         data.* = EventUserData{ .peer = slider };
@@ -1903,6 +2198,14 @@ pub const Slider = struct {
         _ = orientation;
         self.peer.object.setProperty("vertical", @as(u8, @intFromBool(false)));
     }
+
+    pub fn setTickCount(self: *Slider, count: u32) void {
+        self.peer.object.setProperty("numberOfTickMarks", @as(c_long, @intCast(count)));
+    }
+
+    pub fn setSnapToTicks(self: *Slider, snap: bool) void {
+        self.peer.object.setProperty("allowsTickMarkValuesOnly", @as(u8, @intFromBool(snap)));
+    }
 };
 
 // ---------------------------------------------------------------------------
@@ -1930,6 +2233,7 @@ pub const Dropdown = struct {
         const NSPopUpButton = objc.getClass("NSPopUpButton").?;
         const popup = NSPopUpButton.msgSend(objc.Object, "alloc", .{})
             .msgSend(objc.Object, "initWithFrame:pullsDown:", .{ AppKit.NSRect.make(0, 0, 100, 22), @as(u8, @intFromBool(false)) });
+        popup.msgSend(void, "setRefusesFirstResponder:", .{@as(u8, @intFromBool(false))});
 
         const data = try lib.internal.allocator.create(EventUserData);
         data.* = EventUserData{ .peer = popup };

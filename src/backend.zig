@@ -41,6 +41,7 @@ pub const Events = backend.Events;
 
 // Backend types that may not be available on all platforms
 pub const CheckBox = if (@hasDecl(backend, "CheckBox")) backend.CheckBox else void;
+pub const RadioButton = if (@hasDecl(backend, "RadioButton")) backend.RadioButton else void;
 pub const Dropdown = if (@hasDecl(backend, "Dropdown")) backend.Dropdown else void;
 pub const Slider = if (@hasDecl(backend, "Slider")) backend.Slider else void;
 pub const TextArea = if (@hasDecl(backend, "TextArea")) backend.TextArea else void;
