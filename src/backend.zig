@@ -226,3 +226,42 @@ test "backend: scrollable" {
 
     // TODO: more tests
 }
+
+test "backend: image data from bytes" {
+    try backend.init();
+    // Create a small 2x2 RGBA image
+    const pixels = [_]u8{
+        255, 0,   0,   255, // red
+        0,   255, 0,   255, // green
+        0,   0,   255, 255, // blue
+        255, 255, 255, 255, // white
+    };
+    const img = try backend.ImageData.from(2, 2, 8, capy.Colorspace.RGBA, &pixels);
+    try std.testing.expectEqual(@as(usize, 2), img.width);
+    try std.testing.expectEqual(@as(usize, 2), img.height);
+}
+
+test "backend: canvas create and draw context" {
+    try backend.init();
+    var canvas = try backend.Canvas.create();
+    defer canvas.deinit();
+}
+
+test "backend: text layout init and measure" {
+    try backend.init();
+    var layout = backend.Canvas.DrawContextImpl.TextLayout.init();
+    layout.setFont(.{ .face = "Helvetica", .size = 24.0 });
+    const size = layout.getTextSize("Hello, World!");
+    // Text measurement should return non-zero dimensions for non-empty text
+    try std.testing.expect(size.width > 0);
+    try std.testing.expect(size.height > 0);
+}
+
+test "backend: text layout empty string" {
+    try backend.init();
+    var layout = backend.Canvas.DrawContextImpl.TextLayout.init();
+    layout.setFont(.{ .face = "Helvetica", .size = 16.0 });
+    const size = layout.getTextSize("");
+    try std.testing.expectEqual(@as(u32, 0), size.width);
+    try std.testing.expectEqual(@as(u32, 0), size.height);
+}

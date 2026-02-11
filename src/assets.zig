@@ -100,3 +100,37 @@ pub fn get(url: []const u8) GetError!AssetHandle {
         return error.UnsupportedScheme;
     }
 }
+
+test "asset:// URI loads file from assets directory" {
+    // internal.allocator defaults to std.testing.allocator in test mode
+    var handle = try get("asset:///ziglogo.png");
+    defer handle.deinit();
+    const contents = try handle.readAllAlloc(std.testing.allocator, std.math.maxInt(usize));
+    defer std.testing.allocator.free(contents);
+    // PNG files start with the magic bytes 0x89 P N G
+    try std.testing.expect(contents.len > 8);
+    try std.testing.expectEqual(@as(u8, 0x89), contents[0]);
+    try std.testing.expectEqual(@as(u8, 'P'), contents[1]);
+    try std.testing.expectEqual(@as(u8, 'N'), contents[2]);
+    try std.testing.expectEqual(@as(u8, 'G'), contents[3]);
+}
+
+test "triple-slash URI normalization" {
+    // Verify that asset:///path normalizes correctly (the bug that caused SIGABRT)
+    var out_url: [4096]u8 = undefined;
+    const url = "asset:///ziglogo.png";
+    const new_size = std.mem.replacementSize(u8, url, "///", "/");
+    _ = std.mem.replace(u8, url, "///", "/", &out_url);
+    const normalized = out_url[0..new_size];
+    // After normalization, "asset:///ziglogo.png" -> "asset:/ziglogo.png"
+    try std.testing.expectEqualStrings("asset:/ziglogo.png", normalized);
+    // Verify it parses as a valid URI
+    const uri = try Uri.parse(normalized);
+    try std.testing.expectEqualStrings("asset", uri.scheme);
+}
+
+test "unsupported scheme returns error" {
+    // internal.allocator defaults to std.testing.allocator in test mode
+    const result = get("ftp://example.com/file.png");
+    try std.testing.expectError(error.UnsupportedScheme, result);
+}

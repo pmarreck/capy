@@ -88,4 +88,28 @@ pub const ImageData = struct {
     }
 };
 
+test "ImageData.fromFile loads png" {
+    var img = try ImageData.fromFile(std.testing.allocator, "assets/ziglogo.png");
+    defer img.deinit();
+    // ziglogo.png must have non-zero dimensions
+    try std.testing.expect(img.width > 0);
+    try std.testing.expect(img.height > 0);
+    // Data slice must be at least width * height * bytes_per_pixel (RGBA = 4)
+    try std.testing.expect(img.data.len >= img.stride * img.height);
+}
+
+test "ImageData.fromFile dimensions are consistent" {
+    var img = try ImageData.fromFile(std.testing.allocator, "assets/ziglogo.png");
+    defer img.deinit();
+    // Stride must be at least width * 4 (RGBA)
+    try std.testing.expect(img.stride >= img.width * 4);
+    // Total data must cover all rows
+    try std.testing.expectEqual(img.stride * img.height, @as(u32, @intCast(img.data.len)));
+}
+
+test "ImageData.fromFile returns error for missing file" {
+    const result = ImageData.fromFile(std.testing.allocator, "assets/nonexistent.png");
+    try std.testing.expectError(error.FileNotFound, result);
+}
+
 pub const ScalableVectorData = struct {};
