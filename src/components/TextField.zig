@@ -32,6 +32,7 @@ pub const TextField = struct {
     pub const addResizeHandler = _all.addResizeHandler;
     pub const addKeyTypeHandler = _all.addKeyTypeHandler;
     pub const addKeyPressHandler = _all.addKeyPressHandler;
+    pub const addKeyReleaseHandler = _all.addKeyReleaseHandler;
     pub const addPropertyChangeHandler = _all.addPropertyChangeHandler;
     pub const requestDraw = _all.requestDraw;
     pub const alloc = _all.alloc;

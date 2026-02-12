@@ -119,11 +119,17 @@ pub fn keyPress(widget: *Widget, keycode: u16) Error!void {
     if (data.user.keyPressHandler) |h| h(keycode, data.userdata);
 }
 
-/// Alias for keyPress (component-level has no down/up distinction)
-pub const keyDown = keyPress;
+/// Simulate a key down (alias for keyPress)
+pub fn keyDown(widget: *Widget, keycode: u16) Error!void {
+    return keyPress(widget, keycode);
+}
 
-/// No-op at component level (no key-up handler in current event model)
-pub fn keyUp(_: *Widget, _: u16) Error!void {}
+/// Simulate a key release (hardware keycode)
+pub fn keyUp(widget: *Widget, keycode: u16) Error!void {
+    const data = try getEventData(widget);
+    if (data.class.keyReleaseHandler) |h| h(keycode, @intFromPtr(data));
+    if (data.user.keyReleaseHandler) |h| h(keycode, data.userdata);
+}
 
 /// Simulate typing a character/string
 pub fn keyType(widget: *Widget, str: []const u8) Error!void {
@@ -140,6 +146,14 @@ pub fn typeText(widget: *Widget, text: []const u8) Error!void {
         try keyType(widget, text[i..][0..len]);
         i += len;
     }
+}
+
+/// Fire the TextChanged handler chain (simulates native text change notification).
+/// Caller must set the backend peer's text first (that part is widget-type-specific).
+pub fn fireTextChanged(widget: *Widget) Error!void {
+    const data = try getEventData(widget);
+    if (data.class.changedTextHandler) |h| h(@intFromPtr(data));
+    if (data.user.changedTextHandler) |h| h(data.userdata);
 }
 
 // ============================================================
@@ -196,4 +210,84 @@ pub fn native_keyType(_: *Widget, _: []const u8) Error!void {
 
 pub fn native_typeText(_: *Widget, _: []const u8) Error!void {
     return Error.NotImplemented;
+}
+
+// ============================================================
+// Integration tests: component-level event simulation
+// ============================================================
+
+test "TextField text input updates atom" {
+    const TextField = @import("components/TextField.zig").TextField;
+
+    try backend.init();
+    var field = TextField.alloc(.{ .text = "Ada" });
+    defer {
+        // Free the owned text buffer that textChanged allocates (not freed by generic deinit)
+        if (field.text_alloc) |ta| std.testing.allocator.free(ta);
+        field.deinit();
+    }
+    try field.show();
+    // Wire the Widget.peer so getEventData can find the native peer
+    field.widget_data.widget.peer = field.peer.?.peer;
+
+    // Verify initial state
+    try std.testing.expectEqualStrings("Ada", field.text.get());
+
+    // Simulate: OS changes the native text, then fires the changed notification
+    field.peer.?.setText("Peter");
+    try fireTextChanged(field.asWidget());
+
+    // The atom should now reflect the native change
+    try std.testing.expectEqualStrings("Peter", field.text.get());
+}
+
+test "CheckBox click toggles checked atom" {
+    const CheckBox = @import("components/CheckBox.zig").CheckBox;
+
+    try backend.init();
+    var checkbox = CheckBox.alloc(.{});
+    defer checkbox.deinit();
+    try checkbox.show();
+    checkbox.widget_data.widget.peer = checkbox.peer.?.peer;
+
+    // Verify initial state: unchecked
+    try std.testing.expect(!checkbox.checked.get());
+
+    // Simulate: OS toggles the native check state, then fires click
+    checkbox.peer.?.setChecked(true);
+    try click(checkbox.asWidget(), 0, 0);
+
+    // The atom should now reflect the native change
+    try std.testing.expect(checkbox.checked.get());
+}
+
+test "addKeyReleaseHandler fires on simulated keyUp" {
+    const TextField = @import("components/TextField.zig").TextField;
+
+    try backend.init();
+    var field = TextField.alloc(.{});
+    defer field.deinit();
+    try field.show();
+    field.widget_data.widget.peer = field.peer.?.peer;
+
+    // Track handler invocation via mutable statics
+    const State = struct {
+        var called: bool = false;
+        var received_keycode: u16 = 0;
+    };
+    State.called = false;
+    State.received_keycode = 0;
+
+    try field.addKeyReleaseHandler(&struct {
+        fn handler(_: *anyopaque, kc: u16) anyerror!void {
+            State.called = true;
+            State.received_keycode = kc;
+        }
+    }.handler);
+
+    // Simulate a key release via the event simulator
+    try keyUp(field.asWidget(), keycodes.space);
+
+    try std.testing.expect(State.called);
+    try std.testing.expectEqual(keycodes.space, State.received_keycode);
 }

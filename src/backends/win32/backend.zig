@@ -716,6 +716,7 @@ pub fn Events(comptime T: type) type {
                 .KeyType => data.keyTypeHandler = cb,
                 // TODO: implement key press
                 .KeyPress => data.keyPressHandler = cb,
+                .KeyRelease => data.keyReleaseHandler = cb,
                 .PropertyChange => data.propertyChangeHandler = cb,
             }
         }

@@ -67,6 +67,7 @@ pub fn Events(comptime T: type) type {
                 },
                 .KeyType => self.peer.user.keyTypeHandler = cb,
                 .KeyPress => self.peer.user.keyPressHandler = cb,
+                .KeyRelease => self.peer.user.keyReleaseHandler = cb,
                 .PropertyChange => self.peer.user.propertyChangeHandler = cb,
             }
         }

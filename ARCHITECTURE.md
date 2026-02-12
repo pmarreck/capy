@@ -15,25 +15,25 @@ HWND-based controls on Windows, DOM elements on WASM.
 
 ```
                           ┌─────────────────────────┐
-                          │     User Application     │
-                          │  (examples/*.zig)        │
-                          └────────────┬─────────────┘
+                          │     User Application    │
+                          │    (examples/*.zig)     │
+                          └────────────┬────────────┘
                                        │
                           ┌────────────▼─────────────┐
-                          │      src/capy.zig         │
-                          │  (public API surface)     │
+                          │      src/capy.zig        │
+                          │  (public API surface)    │
                           └────────────┬─────────────┘
                                        │
               ┌────────────────────────▼────────────────────────┐
-              │              src/internal.zig                    │
-              │  Widget trait system (All/Widgeting/Events)      │
-              │  + src/containers.zig (layout engine)            │
-              │  + src/data.zig (reactive Atom/ListAtom)         │
+              │              src/internal.zig                   │
+              │  Widget trait system (All/Widgeting/Events)     │
+              │  + src/containers.zig (layout engine)           │
+              │  + src/data.zig (reactive Atom/ListAtom)        │
               └────────────────────────┬────────────────────────┘
                                        │
                           ┌────────────▼─────────────┐
-                          │     src/backend.zig       │
-                          │  (compile-time dispatch)  │
+                          │     src/backend.zig      │
+                          │  (compile-time dispatch) │
                           └────────────┬─────────────┘
                                        │
           ┌──────────┬─────────┬───────┴────┬──────────┬──────────┐

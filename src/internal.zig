@@ -47,6 +47,7 @@ pub fn All(comptime T: type) type {
         pub const ResizeCallback = E.ResizeCallback;
         pub const KeyTypeCallback = E.KeyTypeCallback;
         pub const KeyPressCallback = E.KeyPressCallback;
+        pub const KeyReleaseCallback = E.KeyReleaseCallback;
         pub const PropertyChangeCallback = E.PropertyChangeCallback;
         pub const Handlers = E.Handlers;
         pub const init_events = E.init_events;
@@ -59,6 +60,7 @@ pub fn All(comptime T: type) type {
         pub const addResizeHandler = E.addResizeHandler;
         pub const addKeyTypeHandler = E.addKeyTypeHandler;
         pub const addKeyPressHandler = E.addKeyPressHandler;
+        pub const addKeyReleaseHandler = E.addKeyReleaseHandler;
         pub const addPropertyChangeHandler = E.addPropertyChangeHandler;
         pub const requestDraw = E.requestDraw;
 
@@ -213,6 +215,7 @@ pub fn Widgeting(comptime T: type) type {
             self.widget_data.handlers.resizeHandlers.deinit(allocator);
             self.widget_data.handlers.keyTypeHandlers.deinit(allocator);
             self.widget_data.handlers.keyPressHandlers.deinit(allocator);
+            self.widget_data.handlers.keyReleaseHandlers.deinit(allocator);
             self.widget_data.handlers.propertyChangeHandlers.deinit(allocator);
 
             // deinit all atom properties
@@ -638,6 +641,7 @@ pub fn Events(comptime T: type) type {
         pub const ResizeCallback = *const fn (widget: *anyopaque, size: Size) anyerror!void;
         pub const KeyTypeCallback = *const fn (widget: *anyopaque, key: []const u8) anyerror!void;
         pub const KeyPressCallback = *const fn (widget: *anyopaque, keycode: u16) anyerror!void;
+        pub const KeyReleaseCallback = *const fn (widget: *anyopaque, keycode: u16) anyerror!void;
         pub const PropertyChangeCallback = *const fn (widget: *anyopaque, property_name: []const u8, new_value: *const anyopaque) anyerror!void;
         const HandlerList = std.ArrayList(Callback);
         const DrawHandlerList = std.ArrayList(DrawCallback);
@@ -647,6 +651,7 @@ pub fn Events(comptime T: type) type {
         const ResizeHandlerList = std.ArrayList(ResizeCallback);
         const KeyTypeHandlerList = std.ArrayList(KeyTypeCallback);
         const KeyPressHandlerList = std.ArrayList(KeyPressCallback);
+        const KeyReleaseHandlerList = std.ArrayList(KeyReleaseCallback);
         const PropertyChangeHandlerList = std.ArrayList(PropertyChangeCallback);
 
         pub const Handlers = struct {
@@ -658,6 +663,7 @@ pub fn Events(comptime T: type) type {
             resizeHandlers: ResizeHandlerList,
             keyTypeHandlers: KeyTypeHandlerList,
             keyPressHandlers: KeyPressHandlerList,
+            keyReleaseHandlers: KeyReleaseHandlerList,
             propertyChangeHandlers: PropertyChangeHandlerList,
             userdata: ?*anyopaque = null,
         };
@@ -673,6 +679,7 @@ pub fn Events(comptime T: type) type {
                 .resizeHandlers = .empty,
                 .keyTypeHandlers = .empty,
                 .keyPressHandlers = .empty,
+                .keyReleaseHandlers = .empty,
                 .propertyChangeHandlers = .empty,
             };
             return obj;
@@ -737,6 +744,13 @@ pub fn Events(comptime T: type) type {
         fn keyPressHandler(keycode: u16, data: usize) void {
             const self = @as(*T, @ptrFromInt(data));
             for (self.widget_data.handlers.keyPressHandlers.items) |func| {
+                func(self, keycode) catch |err| errorHandler(err);
+            }
+        }
+
+        fn keyReleaseHandler(keycode: u16, data: usize) void {
+            const self = @as(*T, @ptrFromInt(data));
+            for (self.widget_data.handlers.keyReleaseHandlers.items) |func| {
                 func(self, keycode) catch |err| errorHandler(err);
             }
         }
@@ -821,6 +835,7 @@ pub fn Events(comptime T: type) type {
             try self.peer.?.setCallback(.Resize, resizeHandler);
             try self.peer.?.setCallback(.KeyType, keyTypeHandler);
             try self.peer.?.setCallback(.KeyPress, keyPressHandler);
+            try self.peer.?.setCallback(.KeyRelease, keyReleaseHandler);
             try self.peer.?.setCallback(.PropertyChange, propertyChangeHandler);
 
             _ = try self.widget_data.atoms.opacity.addChangeListener(.{ .function = opacityChanged, .userdata = self });
@@ -873,6 +888,11 @@ pub fn Events(comptime T: type) type {
         pub fn addKeyPressHandler(self: *T, handler: anytype) !void {
             comptime std.debug.assert(isValidHandler(@TypeOf(handler)));
             try self.widget_data.handlers.keyPressHandlers.append(allocator, @as(KeyPressCallback, @ptrCast(handler)));
+        }
+
+        pub fn addKeyReleaseHandler(self: *T, handler: anytype) !void {
+            comptime std.debug.assert(isValidHandler(@TypeOf(handler)));
+            try self.widget_data.handlers.keyReleaseHandlers.append(allocator, @as(KeyReleaseCallback, @ptrCast(handler)));
         }
 
         /// This shouldn't be used by user applications directly.

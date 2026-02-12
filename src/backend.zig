@@ -247,6 +247,73 @@ test "backend: image data from bytes" {
     try std.testing.expectEqual(@as(usize, 2), img.height);
 }
 
+test "backend: keyRelease handler fires on key up" {
+    try backend.init();
+    var button = try backend.Button.create();
+    defer button.deinit();
+
+    // Track whether the handler was called and with what keycode
+    const State = struct {
+        var called: bool = false;
+        var received_keycode: u16 = 0;
+    };
+    State.called = false;
+    State.received_keycode = 0;
+
+    // Set the keyRelease callback
+    try button.setCallback(.KeyRelease, struct {
+        fn handler(keycode: u16, _: usize) void {
+            State.called = true;
+            State.received_keycode = keycode;
+        }
+    }.handler);
+
+    // Verify handler is wired up
+    const data = backend.getEventUserData(button.peer);
+    try std.testing.expect(data.user.keyReleaseHandler != null);
+
+    // Simulate key release by calling the handler directly (as the OS would)
+    const test_keycode: u16 = 42;
+    data.user.keyReleaseHandler.?(test_keycode, data.userdata);
+
+    try std.testing.expect(State.called);
+    try std.testing.expectEqual(@as(u16, 42), State.received_keycode);
+}
+
+test "backend: keyPress and keyRelease are independent" {
+    try backend.init();
+    var button = try backend.Button.create();
+    defer button.deinit();
+
+    const State = struct {
+        var press_count: u32 = 0;
+        var release_count: u32 = 0;
+    };
+    State.press_count = 0;
+    State.release_count = 0;
+
+    try button.setCallback(.KeyPress, struct {
+        fn handler(_: u16, _: usize) void {
+            State.press_count += 1;
+        }
+    }.handler);
+    try button.setCallback(.KeyRelease, struct {
+        fn handler(_: u16, _: usize) void {
+            State.release_count += 1;
+        }
+    }.handler);
+
+    const data = backend.getEventUserData(button.peer);
+
+    // Fire press twice, release once
+    data.user.keyPressHandler.?(0x20, data.userdata);
+    data.user.keyPressHandler.?(0x20, data.userdata);
+    data.user.keyReleaseHandler.?(0x20, data.userdata);
+
+    try std.testing.expectEqual(@as(u32, 2), State.press_count);
+    try std.testing.expectEqual(@as(u32, 1), State.release_count);
+}
+
 test "backend: canvas create and draw context" {
     try backend.init();
     var canvas = try backend.Canvas.create();

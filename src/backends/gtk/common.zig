@@ -37,6 +37,7 @@ pub fn Events(comptime T: type) type {
 
             const event_controller_key = c.gtk_event_controller_key_new();
             _ = c.g_signal_connect_data(event_controller_key, "key-pressed", @as(c.GCallback, @ptrCast(&gtkKeyPress)), null, null, c.G_CONNECT_AFTER);
+            _ = c.g_signal_connect_data(event_controller_key, "key-released", @as(c.GCallback, @ptrCast(&gtkKeyRelease)), null, null, c.G_CONNECT_AFTER);
             c.gtk_widget_add_controller(widget, event_controller_key);
 
             const event_controller_motion = c.gtk_event_controller_motion_new();
@@ -113,6 +114,15 @@ pub fn Events(comptime T: type) type {
             }
 
             return 0;
+        }
+
+        fn gtkKeyRelease(controller: *c.GtkEventControllerKey, _: c.guint, keycode: c.guint, _: c.GdkModifierType, _: usize) callconv(.c) void {
+            const peer = c.gtk_event_controller_get_widget(@ptrCast(controller));
+            const data = getEventUserData(peer);
+            if (data.class.keyReleaseHandler) |handler|
+                handler(@as(u16, @intCast(keycode)), @intFromPtr(data));
+            if (data.user.keyReleaseHandler) |handler|
+                handler(@as(u16, @intCast(keycode)), data.userdata);
         }
 
         fn getWindow(peer: *c.GtkWidget) *c.GtkWidget {
@@ -231,6 +241,7 @@ pub fn Events(comptime T: type) type {
                 .Resize => data.resizeHandler = cb,
                 .KeyType => data.keyTypeHandler = cb,
                 .KeyPress => data.keyPressHandler = cb,
+                .KeyRelease => data.keyReleaseHandler = cb,
                 .PropertyChange => data.propertyChangeHandler = cb,
             }
         }

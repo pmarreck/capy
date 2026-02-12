@@ -220,6 +220,13 @@ fn getCapyEventViewClass() !objc.Class {
         }
     }.imp);
 
+    // keyUp:
+    _ = CapyEventView.addMethod("keyUp:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, event_id: objc.c.id) callconv(.c) void {
+            handleKeyUpEvent(self_id, event_id);
+        }
+    }.imp);
+
     // flagsChanged:
     _ = CapyEventView.addMethod("flagsChanged:", struct {
         fn imp(self_id: objc.c.id, _: objc.c.SEL, event_id: objc.c.id) callconv(.c) void {
@@ -333,6 +340,13 @@ fn getCapyCanvasViewClass() !objc.Class {
     _ = CapyCanvasView.addMethod("keyDown:", struct {
         fn imp(self_id: objc.c.id, _: objc.c.SEL, event_id: objc.c.id) callconv(.c) void {
             handleKeyEvent(self_id, event_id);
+        }
+    }.imp);
+
+    // keyUp:
+    _ = CapyCanvasView.addMethod("keyUp:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, event_id: objc.c.id) callconv(.c) void {
+            handleKeyUpEvent(self_id, event_id);
         }
     }.imp);
 
@@ -667,6 +681,17 @@ fn handleKeyEvent(self_id: objc.c.id, event_id: objc.c.id) void {
         handler(keycode, data.userdata);
 }
 
+fn handleKeyUpEvent(self_id: objc.c.id, event_id: objc.c.id) void {
+    const self_obj = objc.Object{ .value = self_id };
+    const data = getEventDataFromIvar(self_obj) orelse return;
+    const event_obj = objc.Object{ .value = event_id };
+    const keycode: u16 = event_obj.getProperty(u16, "keyCode");
+    if (data.class.keyReleaseHandler) |handler|
+        handler(keycode, @intFromPtr(data));
+    if (data.user.keyReleaseHandler) |handler|
+        handler(keycode, data.userdata);
+}
+
 fn handleFlagsChanged(self_id: objc.c.id, event_id: objc.c.id) void {
     const self_obj = objc.Object{ .value = self_id };
     const data = getEventDataFromIvar(self_obj) orelse return;
@@ -740,6 +765,7 @@ pub fn Events(comptime T: type) type {
                 .Resize => data.resizeHandler = cb,
                 .KeyType => data.keyTypeHandler = cb,
                 .KeyPress => data.keyPressHandler = cb,
+                .KeyRelease => data.keyReleaseHandler = cb,
                 .PropertyChange => data.propertyChangeHandler = cb,
             }
         }
