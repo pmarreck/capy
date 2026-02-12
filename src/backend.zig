@@ -57,6 +57,11 @@ pub const backendExport = if (@hasDecl(backend, "backendExport")) backend.backen
 pub const runOnUIThread = if (@hasDecl(backend, "runOnUIThread")) backend.runOnUIThread else void;
 pub const EventUserData = if (@hasDecl(backend, "EventUserData")) backend.EventUserData else void;
 pub const GuiWidget = if (@hasDecl(backend, "GuiWidget")) backend.GuiWidget else void;
+pub const getEventUserData = if (@hasDecl(backend, "getEventUserData")) backend.getEventUserData else struct {
+    fn f(_: PeerType) *EventUserData {
+        unreachable;
+    }
+}.f;
 
 pub const DrawContext = struct {
     impl: backend.Canvas.DrawContextImpl,

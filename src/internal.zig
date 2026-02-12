@@ -758,8 +758,48 @@ pub fn Events(comptime T: type) type {
 
         fn propertyChangeHandler(name: []const u8, value: *const anyopaque, data: usize) void {
             const self = @as(*T, @ptrFromInt(data));
+
+            // State change logging
+            const state_logger = @import("state_logger.zig");
+            if (state_logger.isEnabled()) {
+                var val_buf: [256]u8 = undefined;
+                const val_str = formatPropertyValue(name, value, &val_buf);
+                state_logger.logPropertyChange(
+                    @typeName(T),
+                    self.widget_data.atoms.name.get(),
+                    @intFromPtr(self),
+                    name,
+                    val_str,
+                );
+            }
+
             for (self.widget_data.handlers.propertyChangeHandlers.items) |func| {
                 func(self, name, value) catch |err| errorHandler(err);
+            }
+        }
+
+        fn formatPropertyValue(property: []const u8, value: *const anyopaque, buf: *[256]u8) []const u8 {
+            // Known property types from components' onPropertyChange handlers:
+            // "value" -> f32 (Slider)
+            // "checked" -> bool (CheckBox, RadioButton)
+            // "selected" -> usize (Dropdown)
+            // "text" -> [:0]const u8 (TextField, TextArea)
+            if (std.mem.eql(u8, property, "value")) {
+                const v = @as(*const f32, @ptrCast(@alignCast(value))).*;
+                return std.fmt.bufPrint(buf, "{d:.2}", .{v}) catch "?";
+            } else if (std.mem.eql(u8, property, "checked")) {
+                const v = @as(*const bool, @ptrCast(@alignCast(value))).*;
+                return if (v) "true" else "false";
+            } else if (std.mem.eql(u8, property, "selected")) {
+                const v = @as(*const usize, @ptrCast(@alignCast(value))).*;
+                return std.fmt.bufPrint(buf, "{d}", .{v}) catch "?";
+            } else if (std.mem.eql(u8, property, "text")) {
+                // Text is a sentinel-terminated slice pointer
+                const v = @as(*const [:0]const u8, @ptrCast(@alignCast(value))).*;
+                return std.fmt.bufPrint(buf, "\"{s}\"", .{v}) catch "?";
+            } else {
+                // Unknown property - output property name as string
+                return std.fmt.bufPrint(buf, "\"{s}\"", .{property}) catch "?";
             }
         }
 

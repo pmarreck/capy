@@ -135,6 +135,7 @@ pub const http = @import("http.zig");
 pub const dev_tools = @import("dev_tools.zig");
 pub const audio = @import("audio.zig");
 pub const testing = @import("testing.zig");
+pub const event_simulator = @import("event_simulator.zig");
 
 pub const allocator = internal.allocator;
 
@@ -168,11 +169,13 @@ pub fn init() !void {
             return num >= 1;
         }
     }.a) catch @panic("OOM");
+    @import("state_logger.zig").init();
     isCapyInitialized = true;
 }
 
 pub fn deinit() void {
     isCapyInitialized = false;
+    @import("state_logger.zig").deinit();
     Monitors.deinit();
 
     @import("timer.zig").runningTimers.deinit();

@@ -8,6 +8,8 @@ const common = @import("common.zig");
 const c = @import("gtk.zig");
 
 pub const EventFunctions = shared.EventFunctions(@This());
+pub const EventUserData = common.EventUserData;
+pub const getEventUserData = common.getEventUserData;
 
 // Supported GTK version
 pub const GTK_VERSION = std.SemanticVersion.Range{
