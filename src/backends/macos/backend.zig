@@ -1381,8 +1381,27 @@ pub const Window = struct {
         // window expands to accommodate its content's natural size.
         expandWindowToFitContent(self.peer.object);
 
-        // Center window on screen as a sensible default
-        self.peer.object.msgSend(void, "center", .{});
+        // Try to restore saved window position using the window title as autosave name.
+        // setFrameAutosaveName: automatically saves position on move/resize and
+        // restores it if a saved frame exists. Only center if no frame was restored.
+        var restored = false;
+        const title = self.peer.object.getProperty(objc.Object, "title");
+        const title_len: u64 = title.msgSend(u64, "length", .{});
+        if (title_len > 0) {
+            const frame_before = self.peer.object.getProperty(AppKit.CGRect, "frame");
+            _ = self.peer.object.msgSend(u8, "setFrameAutosaveName:", .{title.value});
+            const frame_after = self.peer.object.getProperty(AppKit.CGRect, "frame");
+            // If the frame changed, a saved position was restored
+            restored = (frame_before.origin.x != frame_after.origin.x or
+                frame_before.origin.y != frame_after.origin.y or
+                frame_before.size.width != frame_after.size.width or
+                frame_before.size.height != frame_after.size.height);
+        }
+
+        if (!restored) {
+            // Center window on screen as a sensible default
+            self.peer.object.msgSend(void, "center", .{});
+        }
 
         self.peer.object.msgSend(void, "makeKeyAndOrderFront:", .{self.peer.object.value});
         _ = activeWindows.fetchAdd(1, .release);
