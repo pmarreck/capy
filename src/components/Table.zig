@@ -18,8 +18,15 @@ pub const ColumnDef = struct {
 /// Callback type for providing cell data.
 pub const CellProvider = *const fn (row: usize, col: usize, buf: []u8) []const u8;
 
+/// Whether a native table backend is available on this platform.
+const has_native_table = backend.Table != void;
+/// The peer type: native Table when available, Canvas as fallback.
+const TablePeer = if (has_native_table) backend.Table else backend.Canvas;
+
 /// A multi-column data table with headers, row selection, sorting indicators,
 /// and virtual scrolling. Data is provided via a callback function.
+/// Uses native platform table widgets (NSTableView, etc.) when available,
+/// falling back to canvas-drawn rendering.
 pub const Table = struct {
     const _all = internal.All(@This());
     pub const WidgetData = _all.WidgetData;
@@ -78,7 +85,7 @@ pub const Table = struct {
     pub const widget_clone = _all.widget_clone;
     pub const deinit = _all.deinit;
 
-    peer: ?backend.Canvas = null,
+    peer: ?TablePeer = null,
     widget_data: Table.WidgetData = .{},
 
     /// Number of data rows.
@@ -111,16 +118,22 @@ pub const Table = struct {
 
     pub fn init(config: Table.Config) Table {
         var tbl = Table.init_events(Table{});
-        tbl.header_color.set(sys.tableHeader());
-        tbl.row_color_even.set(sys.tableRowEven());
-        tbl.row_color_odd.set(sys.tableRowOdd());
-        tbl.selected_color.set(sys.selectedBackground());
+        if (!has_native_table) {
+            // Canvas fallback: set dark-mode-aware colors
+            tbl.header_color.set(sys.tableHeader());
+            tbl.row_color_even.set(sys.tableRowEven());
+            tbl.row_color_odd.set(sys.tableRowOdd());
+            tbl.selected_color.set(sys.selectedBackground());
+        }
         internal.applyConfigStruct(&tbl, config);
-        tbl.addDrawHandler(&Table.draw) catch unreachable;
-        tbl.addMouseButtonHandler(&Table.onMouseButton) catch unreachable;
-        tbl.addMouseMotionHandler(&Table.onMouseMove) catch unreachable;
-        tbl.addScrollHandler(&Table.onScroll) catch unreachable;
-        tbl.addKeyPressHandler(&Table.onKeyPress) catch unreachable;
+        if (!has_native_table) {
+            // Canvas fallback: register draw/event handlers
+            tbl.addDrawHandler(&Table.draw) catch unreachable;
+            tbl.addMouseButtonHandler(&Table.onMouseButton) catch unreachable;
+            tbl.addMouseMotionHandler(&Table.onMouseMove) catch unreachable;
+            tbl.addScrollHandler(&Table.onScroll) catch unreachable;
+            tbl.addKeyPressHandler(&Table.onKeyPress) catch unreachable;
+        }
         return tbl;
     }
 
@@ -272,6 +285,11 @@ pub const Table = struct {
         var cell_layout = backend.DrawContext.TextLayout.init();
         cell_layout.setFont(.{ .face = "Helvetica", .size = 13.0 });
 
+        // Fill entire widget background first (for areas below data rows)
+        ctx.setColorByte(sys.background());
+        ctx.rectangle(0, 0, w, h);
+        ctx.fill();
+
         // Draw header background
         ctx.setColorByte(self.header_color.get());
         ctx.rectangle(0, 0, w, hh);
@@ -401,19 +419,48 @@ pub const Table = struct {
 
     pub fn show(self: *Table) !void {
         if (self.peer == null) {
-            self.peer = try backend.Canvas.create();
-            _ = try self.row_count.addChangeListener(.{ .function = struct {
-                fn callback(_: usize, userdata: ?*anyopaque) void {
-                    const ptr: *Table = @ptrCast(@alignCast(userdata.?));
-                    ptr.peer.?.requestDraw() catch {};
+            if (comptime has_native_table) {
+                // Native table backend
+                var peer = try backend.Table.create();
+                peer.setColumns(self._columns);
+                if (self._cell_provider) |provider| {
+                    peer.setCellProvider(provider);
                 }
-            }.callback, .userdata = self });
-            _ = try self.selected_row.addChangeListener(.{ .function = struct {
-                fn callback(_: ?usize, userdata: ?*anyopaque) void {
-                    const ptr: *Table = @ptrCast(@alignCast(userdata.?));
-                    ptr.peer.?.requestDraw() catch {};
+                peer.setRowCount(self.row_count.get());
+                if (self.selected_row.get()) |row| {
+                    peer.setSelectedRow(row);
                 }
-            }.callback, .userdata = self });
+                self.peer = peer;
+                // Sync row_count changes to native widget
+                _ = try self.row_count.addChangeListener(.{ .function = struct {
+                    fn callback(new_count: usize, userdata: ?*anyopaque) void {
+                        const ptr: *Table = @ptrCast(@alignCast(userdata.?));
+                        if (ptr.peer) |*p| p.setRowCount(new_count);
+                    }
+                }.callback, .userdata = self });
+                // Sync selected_row changes to native widget
+                _ = try self.selected_row.addChangeListener(.{ .function = struct {
+                    fn callback(new_sel: ?usize, userdata: ?*anyopaque) void {
+                        const ptr: *Table = @ptrCast(@alignCast(userdata.?));
+                        if (ptr.peer) |*p| p.setSelectedRow(new_sel);
+                    }
+                }.callback, .userdata = self });
+            } else {
+                // Canvas fallback
+                self.peer = try backend.Canvas.create();
+                _ = try self.row_count.addChangeListener(.{ .function = struct {
+                    fn callback(_: usize, userdata: ?*anyopaque) void {
+                        const ptr: *Table = @ptrCast(@alignCast(userdata.?));
+                        ptr.peer.?.requestDraw() catch {};
+                    }
+                }.callback, .userdata = self });
+                _ = try self.selected_row.addChangeListener(.{ .function = struct {
+                    fn callback(_: ?usize, userdata: ?*anyopaque) void {
+                        const ptr: *Table = @ptrCast(@alignCast(userdata.?));
+                        ptr.peer.?.requestDraw() catch {};
+                    }
+                }.callback, .userdata = self });
+            }
             try self.setupEvents();
         }
     }

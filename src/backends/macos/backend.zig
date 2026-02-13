@@ -115,36 +115,51 @@ pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
 
     // Set file type filters using UTType (macOS 11+)
     if (!options.select_directories and options.filters.len > 0) {
-        const NSMutableArray = objc.getClass("NSMutableArray").?;
-        const UTType = objc.getClass("UTType").?;
-        const types_array = NSMutableArray.msgSend(objc.Object, "array", .{});
-
+        // Check if any filter is a wildcard (e.g. "*.*" or "*") — if so, allow all files
+        var has_wildcard = false;
         for (options.filters) |filter| {
-            // Parse semicolon-separated patterns like "*.png;*.jpg"
-            var iter = std.mem.splitScalar(u8, std.mem.sliceTo(filter.pattern, 0), ';');
-            while (iter.next()) |pat| {
-                // Strip leading "*." to get extension
-                const ext = if (std.mem.startsWith(u8, pat, "*."))
-                    pat[2..]
-                else
-                    pat;
-                if (ext.len == 0) continue;
-                // Skip wildcard-only patterns
-                if (std.mem.eql(u8, ext, "*")) continue;
-
-                // Create null-terminated extension string
-                const ext_z = lib.internal.allocator.allocSentinel(u8, ext.len, 0) catch continue;
-                defer lib.internal.allocator.free(ext_z);
-                @memcpy(ext_z, ext);
-
-                const ut_type = UTType.msgSend(objc.Object, "typeWithFilenameExtension:", .{AppKit.nsString(ext_z)});
-                if (ut_type.value != 0) {
-                    types_array.msgSend(void, "addObject:", .{ut_type});
-                }
+            const pat_str = std.mem.sliceTo(filter.pattern, 0);
+            if (std.mem.eql(u8, pat_str, "*.*") or std.mem.eql(u8, pat_str, "*")) {
+                has_wildcard = true;
+                break;
             }
         }
 
-        panel.msgSend(void, "setAllowedContentTypes:", .{types_array});
+        if (!has_wildcard) {
+            const NSMutableArray = objc.getClass("NSMutableArray").?;
+            const UTType = objc.getClass("UTType").?;
+            const types_array = NSMutableArray.msgSend(objc.Object, "array", .{});
+
+            for (options.filters) |filter| {
+                // Parse semicolon-separated patterns like "*.png;*.jpg"
+                var iter = std.mem.splitScalar(u8, std.mem.sliceTo(filter.pattern, 0), ';');
+                while (iter.next()) |pat| {
+                    // Strip leading "*." to get extension
+                    const ext = if (std.mem.startsWith(u8, pat, "*."))
+                        pat[2..]
+                    else
+                        pat;
+                    if (ext.len == 0) continue;
+                    if (std.mem.eql(u8, ext, "*")) continue;
+
+                    // Create null-terminated extension string
+                    const ext_z = lib.internal.allocator.allocSentinel(u8, ext.len, 0) catch continue;
+                    defer lib.internal.allocator.free(ext_z);
+                    @memcpy(ext_z, ext);
+
+                    const ut_type = UTType.msgSend(objc.Object, "typeWithFilenameExtension:", .{AppKit.nsString(ext_z)});
+                    if (ut_type.value != 0) {
+                        types_array.msgSend(void, "addObject:", .{ut_type});
+                    }
+                }
+            }
+
+            // Only set content types if we have specific ones
+            const arr_count = types_array.msgSend(u64, "count", .{});
+            if (arr_count > 0) {
+                panel.msgSend(void, "setAllowedContentTypes:", .{types_array});
+            }
+        }
     }
 
     // Run modal dialog (blocks until user responds)
@@ -481,11 +496,8 @@ fn getCapyCanvasViewClass() !objc.Class {
             const cg_context = gfx_ctx.msgSend(AppKit.CGContextRef, "CGContext", .{});
             if (cg_context == null) return;
 
-            // CoreGraphics has bottom-left origin; flip for top-left
-            const frame = self_obj.getProperty(AppKit.CGRect, "bounds");
+            // isFlipped=YES gives top-left origin (matching GTK/Win32); no manual flip needed
             AppKit.CGContextSaveGState(cg_context);
-            AppKit.CGContextTranslateCTM(cg_context, 0, frame.size.height);
-            AppKit.CGContextScaleCTM(cg_context, 1.0, -1.0);
 
             const draw_ctx_impl = Canvas.DrawContextImpl{ .cg_context = cg_context };
             var draw_ctx = @import("../../backend.zig").DrawContext{ .impl = draw_ctx_impl };
@@ -1715,8 +1727,18 @@ pub const Canvas = struct {
             defer if (ct_line != null) AppKit.CFRelease(ct_line);
             if (ct_line == null) return;
 
-            AppKit.CGContextSetTextPosition(self.cg_context, @floatFromInt(x), @floatFromInt(y));
+            // CoreText uses bottom-left origin; flip locally for correct rendering
+            var text_ascent: AppKit.CGFloat = 0;
+            var text_descent: AppKit.CGFloat = 0;
+            var text_leading: AppKit.CGFloat = 0;
+            _ = AppKit.CTLineGetTypographicBounds(ct_line, &text_ascent, &text_descent, &text_leading);
+
+            AppKit.CGContextSaveGState(self.cg_context);
+            AppKit.CGContextTranslateCTM(self.cg_context, @floatFromInt(x), @as(AppKit.CGFloat, @floatFromInt(y)) + text_ascent);
+            AppKit.CGContextScaleCTM(self.cg_context, 1.0, -1.0);
+            AppKit.CGContextSetTextPosition(self.cg_context, 0, 0);
             AppKit.CTLineDraw(ct_line, self.cg_context);
+            AppKit.CGContextRestoreGState(self.cg_context);
         }
 
         pub fn line(self: *DrawContextImpl, x1: i32, y1: i32, x2: i32, y2: i32) void {
@@ -1727,13 +1749,12 @@ pub const Canvas = struct {
 
         pub fn image(self: *DrawContextImpl, x: i32, y: i32, w: u32, h: u32, data: lib.ImageData) void {
             const cg_image = data.peer.cg_image orelse return;
-            const rect = AppKit.CGRect.make(
-                @floatFromInt(x),
-                @floatFromInt(y),
-                @floatFromInt(w),
-                @floatFromInt(h),
-            );
-            AppKit.CGContextDrawImage(self.cg_context, rect, cg_image);
+            // CGContextDrawImage uses bottom-left origin; flip locally
+            AppKit.CGContextSaveGState(self.cg_context);
+            AppKit.CGContextTranslateCTM(self.cg_context, @floatFromInt(x), @as(AppKit.CGFloat, @floatFromInt(y)) + @as(AppKit.CGFloat, @floatFromInt(h)));
+            AppKit.CGContextScaleCTM(self.cg_context, 1.0, -1.0);
+            AppKit.CGContextDrawImage(self.cg_context, AppKit.CGRect.make(0, 0, @floatFromInt(w), @floatFromInt(h)), cg_image);
+            AppKit.CGContextRestoreGState(self.cg_context);
         }
 
         pub fn clear(self: *DrawContextImpl, x: u32, y: u32, w: u32, h: u32) void {
@@ -2261,6 +2282,53 @@ pub const RadioButton = struct {
 };
 
 // ---------------------------------------------------------------------------
+// ProgressBar
+// ---------------------------------------------------------------------------
+
+pub const ProgressBar = struct {
+    peer: GuiWidget,
+
+    const _events = Events(@This());
+    pub const setupEvents = _events.setupEvents;
+    pub const setUserData = _events.setUserData;
+    pub const setCallback = _events.setCallback;
+    pub const setOpacity = _events.setOpacity;
+    pub const getX = _events.getX;
+    pub const getY = _events.getY;
+    pub const getWidth = _events.getWidth;
+    pub const getHeight = _events.getHeight;
+    pub const getPreferredSize = _events.getPreferredSize;
+    pub const requestDraw = _events.requestDraw;
+    pub const deinit = _events.deinit;
+
+    pub fn create() BackendError!ProgressBar {
+        const NSProgressIndicator = objc.getClass("NSProgressIndicator").?;
+        const indicator = NSProgressIndicator.msgSend(objc.Object, "alloc", .{})
+            .msgSend(objc.Object, "initWithFrame:", .{AppKit.NSRect.make(0, 0, 200, 20)});
+        // Determinate bar style
+        indicator.msgSend(void, "setStyle:", .{@as(c_long, 0)}); // NSProgressIndicatorStyleBar
+        indicator.setProperty("indeterminate", @as(u8, @intFromBool(false)));
+        indicator.setProperty("minValue", @as(AppKit.CGFloat, 0.0));
+        indicator.setProperty("maxValue", @as(AppKit.CGFloat, 1.0));
+        indicator.setProperty("doubleValue", @as(AppKit.CGFloat, 0.0));
+
+        const data = try lib.internal.allocator.create(EventUserData);
+        data.* = EventUserData{ .peer = indicator };
+
+        return ProgressBar{
+            .peer = GuiWidget{
+                .object = indicator,
+                .data = data,
+            },
+        };
+    }
+
+    pub fn setValue(self: *ProgressBar, value: f32) void {
+        self.peer.object.setProperty("doubleValue", @as(AppKit.CGFloat, @floatCast(value)));
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Slider
 // ---------------------------------------------------------------------------
 
@@ -2415,6 +2483,285 @@ pub const Dropdown = struct {
 
     pub fn setEnabled(self: *Dropdown, enabled: bool) void {
         self.peer.object.setProperty("enabled", @as(u8, @intFromBool(enabled)));
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Table (Native NSTableView)
+// ---------------------------------------------------------------------------
+
+/// Shared state between the Zig Table backend and ObjC data source/delegate.
+/// Heap-allocated so its address is stable for the ObjC ivar.
+const TableState = struct {
+    cell_provider: ?*const fn (row: usize, col: usize, buf: []u8) []const u8 = null,
+    row_count: usize = 0,
+    column_count: usize = 0,
+    event_data: ?*EventUserData = null,
+};
+
+var cachedCapyTableDelegate: ?objc.Class = null;
+
+fn getCapyTableDelegateClass() !objc.Class {
+    if (cachedCapyTableDelegate) |cls| return cls;
+
+    const NSObjectClass = objc.getClass("NSObject").?;
+    const cls = objc.allocateClassPair(NSObjectClass, "CapyTableDelegate") orelse return error.InitializationError;
+    if (!cls.addIvar("capy_event_data")) return error.InitializationError;
+    if (!cls.addIvar("capy_table_state")) return error.InitializationError;
+
+    // NSTableViewDataSource: numberOfRowsInTableView:
+    _ = cls.addMethod("numberOfRowsInTableView:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, _: objc.c.id) callconv(.c) i64 {
+            const self_obj = objc.Object{ .value = self_id };
+            const state = getTableStateFromIvar(self_obj) orelse return 0;
+            return @intCast(state.row_count);
+        }
+    }.imp);
+
+    // NSTableViewDataSource: tableView:objectValueForTableColumn:row:
+    _ = cls.addMethod("tableView:objectValueForTableColumn:row:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, tv_id: objc.c.id, col_id: objc.c.id, row: i64) callconv(.c) objc.c.id {
+            const self_obj = objc.Object{ .value = self_id };
+            const state = getTableStateFromIvar(self_obj) orelse return AppKit.nsString("").value;
+            const provider = state.cell_provider orelse return AppKit.nsString("").value;
+
+            // Find column index by iterating tableColumns array
+            const tv = objc.Object{ .value = tv_id };
+            const columns = tv.msgSend(objc.Object, "tableColumns", .{});
+            const num_cols: usize = @intCast(columns.msgSend(c_ulong, "count", .{}));
+            var col_idx: usize = 0;
+            for (0..num_cols) |i| {
+                const c_obj = columns.msgSend(objc.Object, "objectAtIndex:", .{@as(c_ulong, i)});
+                if (c_obj.value == col_id) {
+                    col_idx = i;
+                    break;
+                }
+            }
+
+            var buf: [256]u8 = undefined;
+            const text = provider(@intCast(row), col_idx, &buf);
+            // Copy to null-terminated buffer for NSString
+            var ns_buf: [257]u8 = undefined;
+            const len = @min(text.len, 256);
+            @memcpy(ns_buf[0..len], text[0..len]);
+            ns_buf[len] = 0;
+            return AppKit.nsString(@ptrCast(ns_buf[0..len :0])).value;
+        }
+    }.imp);
+
+    // NSTableViewDelegate: tableViewSelectionDidChange:
+    _ = cls.addMethod("tableViewSelectionDidChange:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, notification_id: objc.c.id) callconv(.c) void {
+            const self_obj = objc.Object{ .value = self_id };
+            const data = getEventDataFromIvar(self_obj) orelse return;
+            const notification = objc.Object{ .value = notification_id };
+            const tv = notification.msgSend(objc.Object, "object", .{});
+            const selected_row: i64 = tv.getProperty(i64, "selectedRow");
+
+            // Fire property change with selected row index
+            if (selected_row >= 0) {
+                const idx: usize = @intCast(selected_row);
+                if (data.class.propertyChangeHandler) |handler|
+                    handler("selected", @ptrCast(&idx), @intFromPtr(data));
+                if (data.user.propertyChangeHandler) |handler|
+                    handler("selected", @ptrCast(&idx), data.userdata);
+            } else {
+                // No selection
+                const null_val: ?usize = null;
+                if (data.class.propertyChangeHandler) |handler|
+                    handler("selected", @ptrCast(&null_val), @intFromPtr(data));
+                if (data.user.propertyChangeHandler) |handler|
+                    handler("selected", @ptrCast(&null_val), data.userdata);
+            }
+        }
+    }.imp);
+
+    // NSTableViewDelegate: tableView:didClickTableColumn:
+    _ = cls.addMethod("tableView:didClickTableColumn:", struct {
+        fn imp(self_id: objc.c.id, _: objc.c.SEL, tv_id: objc.c.id, col_id: objc.c.id) callconv(.c) void {
+            const self_obj = objc.Object{ .value = self_id };
+            const data = getEventDataFromIvar(self_obj) orelse return;
+
+            // Find column index
+            const tv = objc.Object{ .value = tv_id };
+            const columns = tv.msgSend(objc.Object, "tableColumns", .{});
+            const num_cols: usize = @intCast(columns.msgSend(c_ulong, "count", .{}));
+            var col_idx: usize = 0;
+            for (0..num_cols) |i| {
+                const c_obj = columns.msgSend(objc.Object, "objectAtIndex:", .{@as(c_ulong, i)});
+                if (c_obj.value == col_id) {
+                    col_idx = i;
+                    break;
+                }
+            }
+
+            if (data.class.propertyChangeHandler) |handler|
+                handler("sort", @ptrCast(&col_idx), @intFromPtr(data));
+            if (data.user.propertyChangeHandler) |handler|
+                handler("sort", @ptrCast(&col_idx), data.userdata);
+        }
+    }.imp);
+
+    objc.registerClassPair(cls);
+    cachedCapyTableDelegate = cls;
+    return cls;
+}
+
+fn getTableStateFromIvar(obj: objc.Object) ?*TableState {
+    const state_obj = obj.getInstanceVariable("capy_table_state");
+    if (@intFromPtr(state_obj.value) == 0) return null;
+    return @as(*TableState, @ptrFromInt(@intFromPtr(state_obj.value)));
+}
+
+fn setTableStateIvar(obj: objc.Object, state: *TableState) void {
+    obj.setInstanceVariable("capy_table_state", objc.Object{ .value = @ptrFromInt(@intFromPtr(state)) });
+}
+
+pub const Table = struct {
+    peer: GuiWidget,
+    table_view: objc.Object,
+    delegate_obj: objc.Object,
+    state: *TableState,
+
+    const _events = Events(@This());
+    pub const setupEvents = _events.setupEvents;
+    pub const setUserData = _events.setUserData;
+    pub const setCallback = _events.setCallback;
+    pub const setOpacity = _events.setOpacity;
+    pub const getX = _events.getX;
+    pub const getY = _events.getY;
+    pub const getWidth = _events.getWidth;
+    pub const getHeight = _events.getHeight;
+    pub const getPreferredSize = _events.getPreferredSize;
+    pub const requestDraw = _events.requestDraw;
+
+    pub fn create() BackendError!Table {
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
+
+        const NSTableView = objc.getClass("NSTableView").?;
+        const NSScrollView = objc.getClass("NSScrollView").?;
+
+        // Create table view
+        const table_view = NSTableView.msgSend(objc.Object, "alloc", .{})
+            .msgSend(objc.Object, "initWithFrame:", .{AppKit.NSRect.make(0, 0, 400, 300)});
+        table_view.msgSend(void, "setUsesAlternatingRowBackgroundColors:", .{@as(u8, 1)});
+        table_view.msgSend(void, "setGridStyleMask:", .{@as(c_ulong, 0)}); // no grid lines (clean look)
+        table_view.msgSend(void, "setAllowsColumnReordering:", .{@as(u8, 1)});
+        table_view.msgSend(void, "setAllowsColumnResizing:", .{@as(u8, 1)});
+        table_view.msgSend(void, "setColumnAutoresizingStyle:", .{@as(c_ulong, 1)}); // uniform column autoresizing
+
+        // Create scroll view wrapper
+        const scroll_view = NSScrollView.msgSend(objc.Object, "alloc", .{})
+            .msgSend(objc.Object, "initWithFrame:", .{AppKit.NSRect.make(0, 0, 400, 300)});
+        scroll_view.msgSend(void, "setDocumentView:", .{table_view.value});
+        scroll_view.msgSend(void, "setHasVerticalScroller:", .{@as(u8, 1)});
+        scroll_view.msgSend(void, "setHasHorizontalScroller:", .{@as(u8, 0)});
+        scroll_view.msgSend(void, "setAutohidesScrollers:", .{@as(u8, 1)});
+        scroll_view.msgSend(void, "setBorderType:", .{@as(c_ulong, 3)}); // NSBezelBorder
+
+        // Create event data
+        const data = try lib.internal.allocator.create(EventUserData);
+        data.* = EventUserData{ .peer = scroll_view };
+
+        // Create shared state
+        const state = try lib.internal.allocator.create(TableState);
+        state.* = TableState{ .event_data = data };
+
+        // Create and configure data source/delegate
+        const ds_cls = try getCapyTableDelegateClass();
+        const ds = ds_cls.msgSend(objc.Object, "alloc", .{}).msgSend(objc.Object, "init", .{});
+        setEventDataIvar(ds, data);
+        setTableStateIvar(ds, state);
+
+        table_view.msgSend(void, "setDataSource:", .{ds.value});
+        table_view.msgSend(void, "setDelegate:", .{ds.value});
+
+        return Table{
+            .peer = GuiWidget{
+                .object = scroll_view,
+                .data = data,
+            },
+            .table_view = table_view,
+            .delegate_obj = ds,
+            .state = state,
+        };
+    }
+
+    pub fn setColumns(self: *Table, columns: []const @import("../../components/Table.zig").ColumnDef) void {
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
+
+        // Remove existing columns
+        const existing = self.table_view.msgSend(objc.Object, "tableColumns", .{});
+        const existing_count: usize = @intCast(existing.msgSend(c_ulong, "count", .{}));
+        // Remove in reverse order to avoid index shifting
+        var i = existing_count;
+        while (i > 0) {
+            i -= 1;
+            const col = existing.msgSend(objc.Object, "objectAtIndex:", .{@as(c_ulong, i)});
+            self.table_view.msgSend(void, "removeTableColumn:", .{col.value});
+        }
+
+        // Add new columns
+        const NSTableColumn = objc.getClass("NSTableColumn").?;
+        for (columns) |col_def| {
+            const str = lib.internal.allocator.dupeZ(u8, col_def.header) catch continue;
+            defer lib.internal.allocator.free(str);
+            const identifier = AppKit.nsString(str);
+
+            const tc = NSTableColumn.msgSend(objc.Object, "alloc", .{})
+                .msgSend(objc.Object, "initWithIdentifier:", .{identifier.value});
+
+            // Set header title
+            const header_cell = tc.getProperty(objc.Object, "headerCell");
+            header_cell.msgSend(void, "setStringValue:", .{identifier.value});
+
+            // Set widths
+            tc.msgSend(void, "setWidth:", .{@as(AppKit.CGFloat, @floatCast(col_def.width))});
+            tc.msgSend(void, "setMinWidth:", .{@as(AppKit.CGFloat, @floatCast(col_def.min_width))});
+
+            self.table_view.msgSend(void, "addTableColumn:", .{tc.value});
+        }
+
+        self.state.column_count = columns.len;
+    }
+
+    pub fn setCellProvider(self: *Table, provider: *const fn (row: usize, col: usize, buf: []u8) []const u8) void {
+        self.state.cell_provider = provider;
+    }
+
+    pub fn setRowCount(self: *Table, count: usize) void {
+        self.state.row_count = count;
+        self.table_view.msgSend(void, "reloadData", .{});
+    }
+
+    pub fn setSelectedRow(self: *Table, row: ?usize) void {
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
+
+        if (row) |r| {
+            const NSIndexSet = objc.getClass("NSIndexSet").?;
+            const index_set = NSIndexSet.msgSend(objc.Object, "indexSetWithIndex:", .{@as(c_ulong, r)});
+            self.table_view.msgSend(void, "selectRowIndexes:byExtendingSelection:", .{ index_set.value, @as(u8, 0) });
+        } else {
+            self.table_view.msgSend(void, "deselectAll:", .{@as(?objc.c.id, null)});
+        }
+    }
+
+    pub fn getSelectedRow(self: *Table) ?usize {
+        const row: i64 = self.table_view.getProperty(i64, "selectedRow");
+        if (row < 0) return null;
+        return @intCast(row);
+    }
+
+    pub fn reloadData(self: *Table) void {
+        self.table_view.msgSend(void, "reloadData", .{});
+    }
+
+    pub fn deinit(self: *const Table) void {
+        lib.internal.allocator.destroy(self.state);
+        _events.deinit(self);
     }
 };
 

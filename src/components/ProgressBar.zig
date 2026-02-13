@@ -1,10 +1,15 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const backend = @import("../backend.zig");
+const internal = @import("../internal.zig");
 const Size = @import("../data.zig").Size;
 const Atom = @import("../data.zig").Atom;
 const Color = @import("../color.zig").Color;
 const sys = @import("../system_colors.zig");
+
+const has_native = backend.ProgressBar != void;
+const ProgressBarPeer = if (has_native) backend.ProgressBar else backend.Canvas;
+
 /// A determinate horizontal progress bar displaying a value from 0.0 to 1.0.
 pub const ProgressBar = struct {
     const _all = @import("../internal.zig").All(@This());
@@ -64,7 +69,7 @@ pub const ProgressBar = struct {
     pub const widget_clone = _all.widget_clone;
     pub const deinit = _all.deinit;
 
-    peer: ?backend.Canvas = null,
+    peer: ?ProgressBarPeer = null,
     widget_data: ProgressBar.WidgetData = .{},
 
     /// Progress value from 0.0 (empty) to 1.0 (full). Animatable via Atom.animate().
@@ -78,10 +83,14 @@ pub const ProgressBar = struct {
 
     pub fn init(config: ProgressBar.Config) ProgressBar {
         var bar = ProgressBar.init_events(ProgressBar{});
-        bar.track_color.set(sys.trackBackground());
-        bar.fill_color.set(sys.accent());
-        @import("../internal.zig").applyConfigStruct(&bar, config);
-        bar.addDrawHandler(&ProgressBar.draw) catch unreachable;
+        if (!has_native) {
+            bar.track_color.set(sys.trackBackground());
+            bar.fill_color.set(sys.accent());
+        }
+        internal.applyConfigStruct(&bar, config);
+        if (!has_native) {
+            bar.addDrawHandler(&ProgressBar.draw) catch unreachable;
+        }
         return bar;
     }
 
@@ -121,25 +130,37 @@ pub const ProgressBar = struct {
 
     pub fn show(self: *ProgressBar) !void {
         if (self.peer == null) {
-            self.peer = try backend.Canvas.create();
-            _ = try self.value.addChangeListener(.{ .function = struct {
-                fn callback(_: f32, userdata: ?*anyopaque) void {
-                    const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
-                    ptr.peer.?.requestDraw() catch {};
-                }
-            }.callback, .userdata = self });
-            _ = try self.track_color.addChangeListener(.{ .function = struct {
-                fn callback(_: Color, userdata: ?*anyopaque) void {
-                    const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
-                    ptr.peer.?.requestDraw() catch {};
-                }
-            }.callback, .userdata = self });
-            _ = try self.fill_color.addChangeListener(.{ .function = struct {
-                fn callback(_: Color, userdata: ?*anyopaque) void {
-                    const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
-                    ptr.peer.?.requestDraw() catch {};
-                }
-            }.callback, .userdata = self });
+            if (comptime has_native) {
+                var peer = try backend.ProgressBar.create();
+                peer.setValue(self.value.get());
+                self.peer = peer;
+                _ = try self.value.addChangeListener(.{ .function = struct {
+                    fn callback(new_val: f32, userdata: ?*anyopaque) void {
+                        const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
+                        if (ptr.peer) |*p| p.setValue(new_val);
+                    }
+                }.callback, .userdata = self });
+            } else {
+                self.peer = try backend.Canvas.create();
+                _ = try self.value.addChangeListener(.{ .function = struct {
+                    fn callback(_: f32, userdata: ?*anyopaque) void {
+                        const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
+                        ptr.peer.?.requestDraw() catch {};
+                    }
+                }.callback, .userdata = self });
+                _ = try self.track_color.addChangeListener(.{ .function = struct {
+                    fn callback(_: Color, userdata: ?*anyopaque) void {
+                        const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
+                        ptr.peer.?.requestDraw() catch {};
+                    }
+                }.callback, .userdata = self });
+                _ = try self.fill_color.addChangeListener(.{ .function = struct {
+                    fn callback(_: Color, userdata: ?*anyopaque) void {
+                        const ptr: *ProgressBar = @ptrCast(@alignCast(userdata.?));
+                        ptr.peer.?.requestDraw() catch {};
+                    }
+                }.callback, .userdata = self });
+            }
             try self.setupEvents();
         }
     }

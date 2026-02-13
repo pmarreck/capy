@@ -21,19 +21,29 @@ fn cellProvider(row: usize, col: usize, buf: []u8) []const u8 {
     return buf[0..len];
 }
 
+// Status label for file dialog results
+var status_label: ?*capy.Label = null;
+var path_display_buf: [512:0]u8 = [_:0]u8{0} ** 512;
+
+fn updatePathDisplay(prefix: []const u8, path: []const u8) void {
+    const total = prefix.len + path.len;
+    if (total < path_display_buf.len) {
+        @memcpy(path_display_buf[0..prefix.len], prefix);
+        @memcpy(path_display_buf[prefix.len..][0..path.len], path);
+        path_display_buf[total] = 0;
+        if (status_label) |lbl| {
+            lbl.text.set(path_display_buf[0..total :0]);
+        }
+    }
+}
+
 pub fn onOpenFile(_: *anyopaque) !void {
     const path = capy.openFileDialog(.{
         .title = "Select a File",
-        .filters = &.{
-            .{ .name = "Zig Files", .pattern = "*.zig" },
-            .{ .name = "All Files", .pattern = "*.*" },
-        },
     });
     if (path) |p| {
         defer capy.allocator.free(p);
-        std.debug.print("Selected file: {s}\n", .{p});
-    } else {
-        std.debug.print("File dialog cancelled\n", .{});
+        updatePathDisplay("File: ", p);
     }
 }
 
@@ -44,9 +54,7 @@ pub fn onOpenDir(_: *anyopaque) !void {
     });
     if (path) |p| {
         defer capy.allocator.free(p);
-        std.debug.print("Selected directory: {s}\n", .{p});
-    } else {
-        std.debug.print("Directory dialog cancelled\n", .{});
+        updatePathDisplay("Dir: ", p);
     }
 }
 
@@ -79,6 +87,10 @@ pub fn main() !void {
     });
     _ = tbl.setCellProvider(&cellProvider);
 
+    // Status label for file selection display
+    const path_label = capy.label(.{ .text = "No selection" });
+    status_label = path_label;
+
     try window.set(
         try capy.column(.{}, .{
             // Title
@@ -104,20 +116,21 @@ pub fn main() !void {
 
             capy.divider(.{ .orientation = .Horizontal }),
 
-            // Row 3: MenuButton
+            // Row 3: Dropdown (native platform widget)
             try capy.row(.{}, .{
                 capy.label(.{ .text = "Format:" }),
-                capy.menuButton(.{ .items = &.{ "PDF", "CSV", "JSON", "XML" } }),
+                capy.dropdown(.{ .values = &.{ "PDF", "CSV", "JSON", "XML" } }),
             }),
 
             capy.divider(.{ .orientation = .Horizontal }),
 
-            // Row 4: File Dialogs
+            // Row 4: File Dialogs + path display
             try capy.row(.{}, .{
                 capy.label(.{ .text = "Dialogs:" }),
                 capy.button(.{ .label = "Open File...", .onclick = onOpenFile }),
                 capy.button(.{ .label = "Select Directory...", .onclick = onOpenDir }),
             }),
+            path_label,
 
             capy.divider(.{ .orientation = .Horizontal }),
 

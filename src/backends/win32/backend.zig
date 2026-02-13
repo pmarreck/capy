@@ -740,6 +740,55 @@ pub fn Events(comptime T: type) type {
                                 T.onSelChange(data, hwnd, @as(usize, @intCast(sel)));
                             }
                         },
+                        win32Backend.LVN_GETDISPINFOW => {
+                            // ListView virtual mode: provide cell text data
+                            const di: *win32Backend.NMLVDISPINFOW = @ptrFromInt(@as(usize, @bitCast(lp)));
+                            const child_hwnd: HWND = nmhdr.hwndFrom.?;
+                            const child_data = getEventUserData(child_hwnd);
+                            if (child_data.peerPtr) |ptr| {
+                                const table: *@import("Table.zig") = @ptrCast(@alignCast(ptr));
+                                if (table.cell_provider) |provider| {
+                                    if (di.item.mask & win32Backend.LVIF_TEXT != 0) {
+                                        const row: usize = @intCast(di.item.iItem);
+                                        const col: usize = @intCast(di.item.iSubItem);
+                                        var buf: [256]u8 = undefined;
+                                        const text = provider(row, col, &buf);
+                                        if (di.item.pszText) |out_buf| {
+                                            const max_chars: usize = @intCast(di.item.cchTextMax);
+                                            if (max_chars > 0) {
+                                                const utf16 = std.unicode.utf8ToUtf16LeWithNull(lib.internal.allocator, text) catch return 0;
+                                                defer lib.internal.allocator.free(utf16);
+                                                const copy_len = @min(utf16.len, max_chars - 1);
+                                                for (0..copy_len) |j| out_buf[j] = utf16[j];
+                                                out_buf[copy_len] = 0;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        win32Backend.LVN_ITEMCHANGED => {
+                            // ListView selection changed
+                            const nmlv: *const win32Backend.NMLISTVIEW = @ptrFromInt(@as(usize, @bitCast(lp)));
+                            if (nmlv.uChanged & win32Backend.LVIS_SELECTED != 0) {
+                                if (nmlv.uNewState & win32Backend.LVIS_SELECTED != 0) {
+                                    const child_hwnd: HWND = nmhdr.hwndFrom.?;
+                                    const child_data = getEventUserData(child_hwnd);
+                                    const idx: usize = @intCast(nmlv.iItem);
+                                    if (child_data.user.propertyChangeHandler) |handler|
+                                        handler("selected", @ptrCast(&idx), child_data.userdata);
+                                }
+                            }
+                        },
+                        win32Backend.LVN_COLUMNCLICK => {
+                            // ListView column header clicked
+                            const nmlv: *const win32Backend.NMLISTVIEW = @ptrFromInt(@as(usize, @bitCast(lp)));
+                            const child_hwnd: HWND = nmhdr.hwndFrom.?;
+                            const child_data = getEventUserData(child_hwnd);
+                            const col_idx: usize = @intCast(nmlv.iSubItem);
+                            if (child_data.user.propertyChangeHandler) |handler|
+                                handler("sort", @ptrCast(&col_idx), child_data.userdata);
+                        },
                         else => {},
                     }
                 },
@@ -1385,6 +1434,8 @@ pub const Button = struct {
 };
 
 pub const Dropdown = @import("Dropdown.zig");
+pub const Table = @import("Table.zig");
+pub const ProgressBar = @import("ProgressBar.zig");
 
 pub const CheckBox = struct {
     peer: HWND,
