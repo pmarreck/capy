@@ -34,6 +34,17 @@ pub fn showNativeMessageDialog(msgType: shared.MessageType, comptime fmt: []cons
     @panic("TODO: message dialogs on Android");
 }
 
+/// Opens a native file/directory selection dialog (not yet supported on Android).
+pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
+    _ = options;
+    @panic("TODO: file dialogs on Android");
+}
+
+/// Returns true if the system is currently in dark mode.
+pub fn isDarkMode() bool {
+    return false; // TODO: query Android Configuration.uiMode
+}
+
 /// user data used for handling events
 pub const EventUserData = struct {
     user: EventFunctions = .{},
@@ -252,6 +263,12 @@ pub const Window = struct {
         _ = width;
         _ = height;
         // Cannot resize an activity on Android.
+    }
+
+    pub fn setIcon(self: *Window, icon_data: anytype) void {
+        _ = self;
+        _ = icon_data;
+        // Android icons are set via the APK manifest, not at runtime.
     }
 
     pub fn setTitle(self: *Window, title: [*:0]const u8) void {

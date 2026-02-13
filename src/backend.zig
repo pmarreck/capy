@@ -28,6 +28,8 @@ const backend = //if (@hasDecl(@import("root"), "capyBackend"))
 // Re-export common backend interface
 pub const init = backend.init;
 pub const showNativeMessageDialog = backend.showNativeMessageDialog;
+pub const openFileDialog = backend.openFileDialog;
+pub const isDarkMode = backend.isDarkMode;
 pub const postEmptyEvent = backend.postEmptyEvent;
 pub const runStep = backend.runStep;
 pub const PeerType = backend.PeerType;

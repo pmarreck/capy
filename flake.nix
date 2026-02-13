@@ -65,6 +65,8 @@
           ];
 
           shellHook = ''
+            # Zig doesn't recognize Nix's -fmacro-prefix-map C flags; suppress warnings
+            unset NIX_CFLAGS_COMPILE
             echo "Capy Development Environment"
             echo "Zig version: $(zig version)"
             echo ""

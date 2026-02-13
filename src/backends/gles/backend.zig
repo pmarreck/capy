@@ -35,6 +35,18 @@ pub fn showNativeMessageDialog(msgType: MessageType, comptime fmt: []const u8, a
     std.log.info("native message dialog (TODO): ({}) {s}", .{ msgType, msg });
 }
 
+/// Opens a native file/directory selection dialog (not yet supported on GLES).
+pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
+    _ = options;
+    std.log.info("file dialogs not yet supported on GLES backend", .{});
+    return null;
+}
+
+/// Returns true if the system is currently in dark mode.
+pub fn isDarkMode() bool {
+    return false;
+}
+
 pub const PeerType = *GuiWidget;
 pub const MouseButton = enum { Left, Middle, Right };
 
@@ -146,6 +158,11 @@ pub const Window = struct {
 
     pub fn resize(self: *Window, width: c_int, height: c_int) void {
         c.glfwSetWindowSize(self.window, width, height);
+    }
+
+    pub fn setIcon(self: *Window, icon_data: anytype) void {
+        _ = self;
+        _ = icon_data;
     }
 
     pub fn setChild(self: *Window, peer: PeerType) void {

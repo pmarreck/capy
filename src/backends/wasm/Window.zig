@@ -56,6 +56,12 @@ pub fn setChild(self: *Window, peer: ?*GuiWidget) void {
     }
 }
 
+pub fn setIcon(self: *Window, icon_data: anytype) void {
+    _ = self;
+    _ = icon_data;
+    // Icons are not applicable for web applications.
+}
+
 pub fn setTitle(self: *Window, title: [*:0]const u8) void {
     // TODO. This should be configured in the javascript
     _ = self;

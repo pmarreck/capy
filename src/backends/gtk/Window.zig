@@ -112,12 +112,38 @@ pub fn setTitle(self: *Window, title: [*:0]const u8) void {
     c.gtk_window_set_title(@as(*c.GtkWindow, @ptrCast(self.peer)), title);
 }
 
-pub fn setIcon(self: *Window, data: ImageData) void {
-    // Currently a no-op, as GTK only allows setting icon during distribution.
-    // That is the app must have a resource folder containing desired icons.
-    // TODO: maybe this could be done by creating a temporary directory and using gtk_icon_theme_add_search_path
-    _ = self;
-    _ = data;
+pub fn setIcon(self: *Window, icon_data: lib.ImageData) void {
+    // GTK4 removed gtk_window_set_icon(). Instead, we write the icon
+    // as a PNG into a temporary icon theme directory and register it.
+    const icon_name = "capy-app-icon";
+
+    // Create temp icon theme directory: /tmp/capy-icons/hicolor/256x256/apps/
+    const dir_path = "/tmp/capy-icons/hicolor/256x256/apps";
+    std.fs.cwd().makePath(dir_path) catch return;
+
+    // Save the pixbuf as PNG to the icon theme directory
+    const file_path = dir_path ++ "/" ++ icon_name ++ ".png";
+    var err: ?*c.GError = null;
+    _ = c.gdk_pixbuf_savev(
+        icon_data.peer.peer,
+        file_path,
+        "png",
+        null,
+        null,
+        &err,
+    );
+    if (err != null) {
+        c.g_error_free(err);
+        return;
+    }
+
+    // Register the icon theme search path and set the icon name
+    const display = c.gtk_widget_get_display(self.peer);
+    const theme = c.gtk_icon_theme_get_for_display(display);
+    if (theme) |t| {
+        c.gtk_icon_theme_add_search_path(t, "/tmp/capy-icons");
+    }
+    c.gtk_window_set_icon_name(@ptrCast(self.peer), icon_name);
 }
 
 pub fn setChild(self: *Window, peer: ?*c.GtkWidget) void {

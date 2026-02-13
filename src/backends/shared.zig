@@ -59,6 +59,55 @@ pub const EventLoopStep = enum { Blocking, Asynchronous };
 
 pub const MessageType = enum { Information, Warning, Error };
 
+pub const FileDialogOptions = struct {
+    title: [:0]const u8 = "Open",
+    /// Select directories instead of files
+    select_directories: bool = false,
+    /// Allow selecting multiple items
+    allow_multiple: bool = false,
+    /// File type filters (ignored when select_directories is true)
+    filters: []const FileFilter = &.{},
+
+    pub const FileFilter = struct {
+        /// Display name, e.g. "Image Files"
+        name: [:0]const u8,
+        /// Semicolon-separated patterns, e.g. "*.png;*.jpg;*.gif"
+        pattern: [:0]const u8,
+    };
+};
+
+test "FileDialogOptions defaults" {
+    const opts = FileDialogOptions{};
+    try std.testing.expectEqualStrings("Open", opts.title);
+    try std.testing.expect(!opts.select_directories);
+    try std.testing.expect(!opts.allow_multiple);
+    try std.testing.expectEqual(@as(usize, 0), opts.filters.len);
+}
+
+test "FileDialogOptions with filters" {
+    const opts = FileDialogOptions{
+        .title = "Import",
+        .select_directories = false,
+        .filters = &.{
+            .{ .name = "Zig Files", .pattern = "*.zig" },
+            .{ .name = "All Files", .pattern = "*.*" },
+        },
+    };
+    try std.testing.expectEqualStrings("Import", opts.title);
+    try std.testing.expectEqual(@as(usize, 2), opts.filters.len);
+    try std.testing.expectEqualStrings("Zig Files", opts.filters[0].name);
+    try std.testing.expectEqualStrings("*.zig", opts.filters[0].pattern);
+}
+
+test "FileDialogOptions directory mode" {
+    const opts = FileDialogOptions{
+        .title = "Select Folder",
+        .select_directories = true,
+    };
+    try std.testing.expect(opts.select_directories);
+    try std.testing.expectEqual(@as(usize, 0), opts.filters.len);
+}
+
 pub const BackendError = error{ UnknownError, InitializationError } || std.mem.Allocator.Error;
 
 pub const LinearGradient = struct {

@@ -89,6 +89,99 @@ pub fn showNativeMessageDialog(msgType: shared.MessageType, comptime fmt: []cons
     _ = alert.msgSend(i64, "runModal", .{});
 }
 
+/// Opens a native file/directory selection dialog.
+/// Returns the selected path, or null if cancelled.
+/// Caller owns returned memory (allocated with lib.internal.allocator).
+pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
+
+    const NSOpenPanel = objc.getClass("NSOpenPanel").?;
+    const panel = NSOpenPanel.msgSend(objc.Object, "openPanel", .{});
+
+    // Set title
+    panel.msgSend(void, "setTitle:", .{AppKit.nsString(options.title)});
+
+    // Configure file vs directory mode
+    if (options.select_directories) {
+        panel.msgSend(void, "setCanChooseFiles:", .{@as(objc.c.BOOL, false)});
+        panel.msgSend(void, "setCanChooseDirectories:", .{@as(objc.c.BOOL, true)});
+    } else {
+        panel.msgSend(void, "setCanChooseFiles:", .{@as(objc.c.BOOL, true)});
+        panel.msgSend(void, "setCanChooseDirectories:", .{@as(objc.c.BOOL, false)});
+    }
+
+    panel.msgSend(void, "setAllowsMultipleSelection:", .{@as(objc.c.BOOL, options.allow_multiple)});
+
+    // Set file type filters using UTType (macOS 11+)
+    if (!options.select_directories and options.filters.len > 0) {
+        const NSMutableArray = objc.getClass("NSMutableArray").?;
+        const UTType = objc.getClass("UTType").?;
+        const types_array = NSMutableArray.msgSend(objc.Object, "array", .{});
+
+        for (options.filters) |filter| {
+            // Parse semicolon-separated patterns like "*.png;*.jpg"
+            var iter = std.mem.splitScalar(u8, std.mem.sliceTo(filter.pattern, 0), ';');
+            while (iter.next()) |pat| {
+                // Strip leading "*." to get extension
+                const ext = if (std.mem.startsWith(u8, pat, "*."))
+                    pat[2..]
+                else
+                    pat;
+                if (ext.len == 0) continue;
+                // Skip wildcard-only patterns
+                if (std.mem.eql(u8, ext, "*")) continue;
+
+                // Create null-terminated extension string
+                const ext_z = lib.internal.allocator.allocSentinel(u8, ext.len, 0) catch continue;
+                defer lib.internal.allocator.free(ext_z);
+                @memcpy(ext_z, ext);
+
+                const ut_type = UTType.msgSend(objc.Object, "typeWithFilenameExtension:", .{AppKit.nsString(ext_z)});
+                if (ut_type.value != 0) {
+                    types_array.msgSend(void, "addObject:", .{ut_type});
+                }
+            }
+        }
+
+        panel.msgSend(void, "setAllowedContentTypes:", .{types_array});
+    }
+
+    // Run modal dialog (blocks until user responds)
+    const result = panel.msgSend(i64, "runModal", .{});
+
+    // NSModalResponseOK = 1
+    if (result == 1) {
+        const urls = panel.msgSend(objc.Object, "URLs", .{});
+        const count = urls.msgSend(u64, "count", .{});
+        if (count > 0) {
+            const first_url = urls.msgSend(objc.Object, "objectAtIndex:", .{@as(u64, 0)});
+            const path_nsstring = first_url.msgSend(objc.Object, "path", .{});
+            const cstr = path_nsstring.msgSend([*:0]const u8, "UTF8String", .{});
+            // UTF8String returns a temporary pointer - must copy to owned buffer
+            const len = std.mem.len(cstr);
+            const owned = lib.internal.allocator.allocSentinel(u8, len, 0) catch return null;
+            @memcpy(owned, cstr[0..len]);
+            return owned;
+        }
+    }
+
+    return null;
+}
+
+/// Returns true if the system is currently in dark mode.
+pub fn isDarkMode() bool {
+    const pool = objc.AutoreleasePool.init();
+    defer pool.deinit();
+
+    const NSApp = objc.getClass("NSApplication").?.msgSend(objc.Object, "sharedApplication", .{});
+    const appearance = NSApp.msgSend(objc.Object, "effectiveAppearance", .{});
+    const name = appearance.msgSend(objc.Object, "name", .{});
+    const dark_str = objc.getClass("NSString").?.msgSend(objc.Object, "alloc", .{})
+        .msgSend(objc.Object, "initWithUTF8String:", .{@as([*:0]const u8, "Dark")});
+    return name.msgSend(objc.c.BOOL, "containsString:", .{dark_str});
+}
+
 /// user data used for handling events
 pub const EventUserData = struct {
     user: EventFunctions = .{},
@@ -1232,6 +1325,26 @@ pub const Window = struct {
         defer pool.deinit();
 
         self.peer.object.setProperty("title", AppKit.nsString(title));
+    }
+
+    pub fn setIcon(self: *Window, icon_data: lib.ImageData) void {
+        _ = self;
+        const pool = objc.AutoreleasePool.init();
+        defer pool.deinit();
+
+        const cg_image = icon_data.peer.cg_image orelse return;
+
+        const NSImage_class = objc.getClass("NSImage") orelse return;
+        const ns_image = NSImage_class.msgSend(objc.Object, "alloc", .{});
+        const size = AppKit.CGSize{
+            .width = @floatFromInt(icon_data.width),
+            .height = @floatFromInt(icon_data.height),
+        };
+        const initialized = ns_image.msgSend(objc.Object, "initWithCGImage:size:", .{ cg_image, size });
+
+        const NSApp_class = objc.getClass("NSApplication") orelse return;
+        const app = NSApp_class.msgSend(objc.Object, "sharedApplication", .{});
+        app.msgSend(void, "setApplicationIconImage:", .{initialized});
     }
 
     pub fn setChild(self: *Window, optional_peer: ?GuiWidget) void {

@@ -169,6 +169,133 @@ pub fn showNativeMessageDialog(msgType: MessageType, comptime fmt: []const u8, a
     _ = win32.MessageBoxW(null, msg_utf16, L("Dialog"), icon);
 }
 
+/// Opens a native file/directory selection dialog.
+/// Returns the selected path, or null if cancelled.
+/// Caller owns returned memory (allocated with lib.internal.allocator).
+pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
+    // Initialize COM (ok if already initialized)
+    _ = win32.CoInitializeEx(null, win32.COINIT_APARTMENTTHREADED);
+
+    // Create IFileOpenDialog
+    var dialog_raw: *anyopaque = undefined;
+    const hr = win32.CoCreateInstance(
+        win32.CLSID_FileOpenDialog,
+        null,
+        win32.CLSCTX_ALL,
+        win32.IID_IFileOpenDialog,
+        @ptrCast(&dialog_raw),
+    );
+    if (hr != win32.S_OK) return null;
+    const dialog: *win32.IFileOpenDialog = @ptrCast(@alignCast(dialog_raw));
+    defer _ = dialog.IUnknown.Release();
+
+    // Set title
+    const title_utf16 = std.unicode.utf8ToUtf16LeAllocZ(lib.internal.allocator, std.mem.sliceTo(options.title, 0)) catch return null;
+    defer lib.internal.allocator.free(title_utf16);
+    _ = dialog.IFileDialog.SetTitle(title_utf16);
+
+    // Set options
+    var fos: win32.FILEOPENDIALOGOPTIONS = .{};
+    _ = dialog.IFileDialog.GetOptions(&fos);
+    fos.FORCEFILESYSTEM = 1;
+    if (options.select_directories) {
+        fos.PICKFOLDERS = 1;
+    } else {
+        fos.FILEMUSTEXIST = 1;
+    }
+    if (options.allow_multiple) {
+        fos.ALLOWMULTISELECT = 1;
+    }
+    _ = dialog.IFileDialog.SetOptions(fos);
+
+    // Set file type filters
+    if (!options.select_directories and options.filters.len > 0) {
+        const filter_specs = lib.internal.allocator.alloc(win32.COMDLG_FILTERSPEC, options.filters.len) catch return null;
+        defer lib.internal.allocator.free(filter_specs);
+
+        // Temporary storage for UTF-16 strings
+        const names_utf16 = lib.internal.allocator.alloc(?[*:0]const u16, options.filters.len) catch return null;
+        defer {
+            for (names_utf16) |maybe_n| {
+                if (maybe_n) |n| lib.internal.allocator.free(std.mem.span(n));
+            }
+            lib.internal.allocator.free(names_utf16);
+        }
+        const patterns_utf16 = lib.internal.allocator.alloc(?[*:0]const u16, options.filters.len) catch return null;
+        defer {
+            for (patterns_utf16) |maybe_p| {
+                if (maybe_p) |p| lib.internal.allocator.free(std.mem.span(p));
+            }
+            lib.internal.allocator.free(patterns_utf16);
+        }
+
+        for (options.filters, 0..) |f, i| {
+            const name_z = std.unicode.utf8ToUtf16LeAllocZ(lib.internal.allocator, std.mem.sliceTo(f.name, 0)) catch return null;
+            names_utf16[i] = name_z;
+            const pat_z = std.unicode.utf8ToUtf16LeAllocZ(lib.internal.allocator, std.mem.sliceTo(f.pattern, 0)) catch return null;
+            patterns_utf16[i] = pat_z;
+            filter_specs[i] = .{
+                .pszName = name_z,
+                .pszSpec = pat_z,
+            };
+        }
+
+        _ = dialog.IFileDialog.SetFileTypes(@intCast(options.filters.len), filter_specs.ptr);
+    }
+
+    // Show dialog (blocks until user responds)
+    const show_hr = dialog.IModalWindow.Show(null);
+    if (show_hr != win32.S_OK) return null;
+
+    // Get result
+    var item: ?*win32.IShellItem = null;
+    _ = dialog.IFileDialog.GetResult(&item);
+    if (item) |shell_item| {
+        defer _ = shell_item.IUnknown.Release();
+        var path_pwstr: ?win32.PWSTR = null;
+        _ = shell_item.GetDisplayName(win32.SIGDN_FILESYSPATH, &path_pwstr);
+        if (path_pwstr) |p| {
+            defer win32.CoTaskMemFree(@ptrCast(p));
+            // Convert UTF-16 to UTF-8
+            const path_u8 = std.unicode.utf16LeToUtf8Alloc(lib.internal.allocator, std.mem.span(p)) catch return null;
+            defer lib.internal.allocator.free(path_u8);
+            // Create sentinel-terminated copy
+            const result = lib.internal.allocator.allocSentinel(u8, path_u8.len, 0) catch return null;
+            @memcpy(result, path_u8);
+            return result;
+        }
+    }
+
+    return null;
+}
+
+/// Returns true if the system is currently in dark mode.
+pub fn isDarkMode() bool {
+    // Read HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize\AppsUseLightTheme
+    var hkey: ?win32.HKEY = null;
+    const status = win32.RegOpenKeyExW(
+        win32.HKEY_CURRENT_USER,
+        L("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+        0,
+        win32.KEY_READ,
+        &hkey,
+    );
+    if (status != @as(i32, 0)) return false;
+    defer _ = win32.RegCloseKey(hkey.?);
+
+    var value: u32 = 1; // default: light mode
+    var size: u32 = @sizeOf(u32);
+    _ = win32.RegQueryValueExW(
+        hkey.?,
+        L("AppsUseLightTheme"),
+        null,
+        null,
+        @ptrCast(&value),
+        &size,
+    );
+    return value == 0;
+}
+
 pub var defaultWHWND: HWND = undefined;
 
 pub const Window = struct {
@@ -272,6 +399,17 @@ pub const Window = struct {
                 0xFFFFFFFF,
                 null,
                 win32.ULW_OPAQUE,
+            );
+        }
+
+        // Enable dark title bar when system is in dark mode
+        if (isDarkMode()) {
+            const use_dark: u32 = 1;
+            _ = win32.DwmSetWindowAttribute(
+                hwnd,
+                win32.DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &use_dark,
+                @sizeOf(u32),
             );
         }
 
@@ -424,6 +562,69 @@ pub const Window = struct {
             });
             self.in_fullscreen = false;
         }
+    }
+
+    pub fn setIcon(self: *Window, icon_data: lib.ImageData) void {
+        const icon_mod = @import("../../icon.zig");
+
+        // Downscale RGBA to 32x32 for the icon
+        const size: u32 = 32;
+        const scaled = icon_mod.downscaleRGBA(
+            icon_data.data,
+            icon_data.width,
+            icon_data.height,
+            size,
+            size,
+            lib.internal.allocator,
+        ) catch return;
+        defer lib.internal.allocator.free(scaled);
+
+        // Windows uses BGRA byte order
+        icon_mod.rgbaToBgra(scaled);
+
+        // Create a DIB section for the color bitmap (top-down = negative height)
+        var bmi: win32.BITMAPINFO = .{
+            .bmiHeader = .{
+                .biSize = @sizeOf(win32.BITMAPINFOHEADER),
+                .biWidth = @intCast(size),
+                .biHeight = -@as(i32, @intCast(size)), // top-down
+                .biPlanes = 1,
+                .biBitCount = 32,
+                .biCompression = @intCast(win32.BI_RGB),
+                .biSizeImage = 0,
+                .biXPelsPerMeter = 0,
+                .biYPelsPerMeter = 0,
+                .biClrUsed = 0,
+                .biClrImportant = 0,
+            },
+            .bmiColors = .{.{ .rgbBlue = 0, .rgbGreen = 0, .rgbRed = 0, .rgbReserved = 0 }},
+        };
+
+        var bits: ?*anyopaque = null;
+        const hbm_color = win32.CreateDIBSection(null, &bmi, win32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
+
+        // Copy BGRA pixel data into the DIB section
+        if (bits) |ptr| {
+            const dst: [*]u8 = @ptrCast(ptr);
+            @memcpy(dst[0..scaled.len], scaled);
+        }
+
+        // Create monochrome mask bitmap (all opaque)
+        const hbm_mask = win32.CreateBitmap(@intCast(size), @intCast(size), 1, 1, null) orelse return;
+
+        var iconinfo = win32.ICONINFO{
+            .fIcon = 1,
+            .xHotspot = 0,
+            .yHotspot = 0,
+            .hbmMask = hbm_mask,
+            .hbmColor = hbm_color,
+        };
+
+        const hicon = win32.CreateIconIndirect(&iconinfo) orelse return;
+
+        // Set both big and small icons
+        _ = win32.SendMessageW(self.hwnd, win32.WM_SETICON, win32.ICON_BIG, @bitCast(@intFromPtr(hicon)));
+        _ = win32.SendMessageW(self.hwnd, win32.WM_SETICON, win32.ICON_SMALL, @bitCast(@intFromPtr(hicon)));
     }
 
     pub fn show(self: *Window) void {

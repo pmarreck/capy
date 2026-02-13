@@ -19,6 +19,9 @@ pub const CapyBuildOptions = struct {
     // Linux
     // Nothing.
 
+    // Icon
+    icon_path: ?[]const u8 = null,
+
     // Android
     // As of 2022, 95% of Android devices use Android 8 (Oreo) or higher
     android_version: AndroidSdk.AndroidVersion = .android8,

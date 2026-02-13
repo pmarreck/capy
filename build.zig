@@ -10,6 +10,25 @@ fn installCapyDependencies(b: *std.Build, module: *std.Build.Module, options: Ca
     const target = module.resolved_target.?;
     const optimize = module.optimize.?;
 
+    // Set up icon data module — uses write-files so the PNG is within the module's package path
+    const wf = b.addWriteFiles();
+    if (options.icon_path) |icon_path| {
+        _ = wf.addCopyFile(b.path(icon_path), "icon.png");
+        const icon_module = b.createModule(.{
+            .root_source_file = wf.add("icon_data.zig",
+                \\pub const data: ?[]const u8 = @embedFile("icon.png");
+            ),
+        });
+        module.addImport("capy_icon_data", icon_module);
+    } else {
+        const icon_module = b.createModule(.{
+            .root_source_file = wf.add("icon_data.zig",
+                \\pub const data: ?[]const u8 = null;
+            ),
+        });
+        module.addImport("capy_icon_data", icon_module);
+    }
+
     const zigimg_dep = b.dependency("zigimg", .{
         .target = target,
         .optimize = optimize,
@@ -105,11 +124,21 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const app_name = b.option([]const u8, "app_name", "The name of the application, to be used for packaging purposes.");
+    const icon_path = b.option([]const u8, "icon", "Path to app icon PNG (square, RGBA)");
+
+    // Icon path fallback: -Dicon > assets/icon.png (if exists)
+    const resolved_icon: ?[]const u8 = icon_path orelse blk: {
+        if (std.fs.cwd().access(b.pathFromRoot("assets/icon.png"), .{}))
+            break :blk "assets/icon.png"
+        else |_|
+            break :blk null;
+    };
 
     const options = CapyBuildOptions{
         .target = target,
         .optimize = optimize,
         .app_name = app_name orelse "Capy Example",
+        .icon_path = resolved_icon,
     };
 
     const module = b.addModule("capy", .{

@@ -24,6 +24,18 @@ pub fn showNativeMessageDialog(msgType: shared.MessageType, comptime fmt: []cons
     std.log.info("native message dialog (TODO): ({}) {s}", .{ msgType, msg });
 }
 
+/// Opens a native file/directory selection dialog (not yet supported on WASM).
+pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
+    _ = options;
+    std.log.info("file dialogs not yet supported on WASM", .{});
+    return null;
+}
+
+/// Returns true if the system is currently in dark mode.
+pub fn isDarkMode() bool {
+    return false; // TODO: could query via JS matchMedia('(prefers-color-scheme: dark)')
+}
+
 pub fn init() !void {
     // no initialization to do
 }

@@ -62,6 +62,41 @@ pub const textArea = @import("components/TextArea.zig").textArea;
 pub const TextField = @import("components/TextField.zig").TextField;
 pub const textField = @import("components/TextField.zig").textField;
 
+// Canvas-based widgets
+pub const Divider = @import("components/Divider.zig").Divider;
+pub const divider = @import("components/Divider.zig").divider;
+
+pub const ProgressBar = @import("components/ProgressBar.zig").ProgressBar;
+pub const progressBar = @import("components/ProgressBar.zig").progressBar;
+
+pub const Spinner = @import("components/Spinner.zig").Spinner;
+pub const spinner = @import("components/Spinner.zig").spinner;
+
+pub const SegmentedControl = @import("components/SegmentedControl.zig").SegmentedControl;
+pub const segmentedControl = @import("components/SegmentedControl.zig").segmentedControl;
+
+pub const MenuButton = @import("components/MenuButton.zig").MenuButton;
+pub const menuButton = @import("components/MenuButton.zig").menuButton;
+
+pub const AlertDialog = @import("components/AlertDialog.zig").AlertDialog;
+pub const alertDialog = @import("components/AlertDialog.zig").alertDialog;
+
+pub const FlyoutPanel = @import("components/FlyoutPanel.zig").FlyoutPanel;
+pub const flyoutPanel = @import("components/FlyoutPanel.zig").flyoutPanel;
+pub const Edge = @import("components/FlyoutPanel.zig").Edge;
+
+pub const ContextMenu = @import("components/ContextMenu.zig").ContextMenu;
+pub const contextMenu = @import("components/ContextMenu.zig").contextMenu;
+pub const ContextMenuItem = @import("components/ContextMenu.zig").ContextMenuItem;
+
+pub const Table = @import("components/Table.zig").Table;
+pub const table = @import("components/Table.zig").table;
+pub const ColumnDef = @import("components/Table.zig").ColumnDef;
+pub const CellProvider = @import("components/Table.zig").CellProvider;
+
+// Overlay utilities
+pub const overlay = @import("overlay.zig");
+
 // Containers
 const containers = @import("containers.zig");
 pub const Layout = containers.Layout;
@@ -136,6 +171,8 @@ pub const dev_tools = @import("dev_tools.zig");
 pub const audio = @import("audio.zig");
 pub const testing = @import("testing.zig");
 pub const event_simulator = @import("event_simulator.zig");
+pub const icon = @import("icon.zig");
+pub const icon_embed = @import("icon_embed.zig");
 
 pub const allocator = internal.allocator;
 
@@ -151,6 +188,14 @@ else
 
 pub const EventLoopStep = @import("backends/shared.zig").EventLoopStep;
 pub const MouseButton = @import("backends/shared.zig").MouseButton;
+pub const FileDialogOptions = @import("backends/shared.zig").FileDialogOptions;
+
+/// Opens a native file/directory selection dialog.
+/// Returns the selected path, or null if cancelled.
+/// Caller owns returned memory (free with `capy.allocator.free(result)`).
+pub const openFileDialog = backend.openFileDialog;
+pub const isDarkMode = backend.isDarkMode;
+pub const SystemColors = @import("system_colors.zig");
 
 // This is a private global variable used for safety.
 var isCapyInitialized: bool = false;
