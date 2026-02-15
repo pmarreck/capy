@@ -7,7 +7,7 @@ const zigwin32 = @import("zigwin32");
 const win32 = zigwin32.everything;
 const Events = @import("backend.zig").Events;
 const getEventUserData = @import("backend.zig").getEventUserData;
-const _T = zigwin32.zig._T;
+const L = zigwin32.zig.L;
 
 const Table = @This();
 
@@ -30,19 +30,18 @@ pub const deinit = _events.deinit;
 
 pub fn create() !Table {
     const hwnd = win32.CreateWindowExW(
-        @as(win32.WINDOW_EX_STYLE, @enumFromInt(0)), // dwExtStyle
-        @ptrCast(_T("SysListView32")), // lpClassName
-        _T(""), // lpWindowName
-        @as(win32.WINDOW_STYLE, @enumFromInt(
-            @intFromEnum(win32.WS_TABSTOP) |
-                @intFromEnum(win32.WS_CHILD) |
-                @intFromEnum(win32.WS_BORDER) |
-                @intFromEnum(win32.WS_VISIBLE) |
-                win32Backend.LVS_REPORT |
-                win32Backend.LVS_SINGLESEL |
-                win32Backend.LVS_SHOWSELALWAYS |
-                win32Backend.LVS_OWNERDATA,
-        )), // dwStyle
+        win32.WINDOW_EX_STYLE{}, // dwExtStyle
+        @ptrCast(L("SysListView32")), // lpClassName
+        L(""), // lpWindowName
+        @as(win32.WINDOW_STYLE, @bitCast(@as(u32, @bitCast(win32.WINDOW_STYLE{
+            .TABSTOP = 1,
+            .CHILD = 1,
+            .BORDER = 1,
+            .VISIBLE = 1,
+        })) | win32Backend.LVS_REPORT |
+            win32Backend.LVS_SINGLESEL |
+            win32Backend.LVS_SHOWSELALWAYS |
+            win32Backend.LVS_OWNERDATA)), // dwStyle
         0, // X
         0, // Y
         400, // nWidth

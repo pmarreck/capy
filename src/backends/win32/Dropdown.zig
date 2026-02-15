@@ -6,7 +6,6 @@ const zigwin32 = @import("zigwin32");
 const win32 = zigwin32.everything;
 const Events = @import("backend.zig").Events;
 const getEventUserData = @import("backend.zig").getEventUserData;
-const _T = zigwin32.zig._T;
 const L = zigwin32.zig.L;
 
 const Dropdown = @This();
@@ -29,9 +28,9 @@ pub const deinit = _events.deinit;
 
 pub fn create() !Dropdown {
     const hwnd = win32.CreateWindowExW(win32.WS_EX_LEFT, // dwExtStyle
-        _T("COMBOBOX"), // lpClassName
-        _T(""), // lpWindowName
-        @as(win32.WINDOW_STYLE, @enumFromInt(@intFromEnum(win32.WS_TABSTOP) | @intFromEnum(win32.WS_CHILD) | @intFromEnum(win32.WS_BORDER) | win32.CBS_DROPDOWNLIST | win32.CBS_HASSTRINGS)), // dwStyle
+        L("COMBOBOX"), // lpClassName
+        L(""), // lpWindowName
+        @as(win32.WINDOW_STYLE, @bitCast(@as(u32, @bitCast(win32.WINDOW_STYLE{ .TABSTOP = 1, .CHILD = 1, .BORDER = 1 })) | @as(u32, @intCast(win32.CBS_DROPDOWNLIST)) | @as(u32, @intCast(win32.CBS_HASSTRINGS)))), // dwStyle
         0, // X
         0, // Y
         100, // nWidth

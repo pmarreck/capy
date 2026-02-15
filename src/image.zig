@@ -31,7 +31,7 @@ pub const ImageData = struct {
             .width = width,
             .height = height,
             .stride = stride,
-            .peer = try backend.ImageData.from(width, height, stride, cs, bytes),
+            .peer = if (backend.ImageData != void) try backend.ImageData.from(width, height, stride, cs, bytes) else {},
             .data = bytes,
             .allocator = allocator,
         };

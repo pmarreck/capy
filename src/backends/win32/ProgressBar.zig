@@ -27,13 +27,10 @@ pub const deinit = _events.deinit;
 
 pub fn create() !ProgressBar {
     const hwnd = win32.CreateWindowExW(
-        @as(win32.WINDOW_EX_STYLE, @enumFromInt(0)), // dwExtStyle
+        win32.WINDOW_EX_STYLE{}, // dwExtStyle
         L("msctls_progress32"), // lpClassName
         L(""), // lpWindowName
-        @as(win32.WINDOW_STYLE, @enumFromInt(
-            @intFromEnum(win32.WS_CHILD) |
-                @intFromEnum(win32.WS_VISIBLE),
-        )), // dwStyle
+        win32.WINDOW_STYLE{ .CHILD = 1, .VISIBLE = 1 }, // dwStyle
         0, // X
         0, // Y
         200, // nWidth

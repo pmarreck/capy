@@ -1093,7 +1093,7 @@ pub const Canvas = struct {
             pub fn getTextSize(self: *TextLayout, str: []const u8) TextSize {
                 var size: win32.SIZE = undefined;
                 const allocator = lib.internal.allocator;
-                const wide = std.unicode.utf8ToUtf16LeAllocZ(allocator, str) catch return; // invalid utf8 or not enough memory
+                const wide = std.unicode.utf8ToUtf16LeAllocZ(allocator, str) catch return TextSize{ .width = 0, .height = 0 }; // invalid utf8 or not enough memory
                 defer allocator.free(wide);
                 _ = win32.GetTextExtentPoint32W(self.hdc, wide.ptr, @as(c_int, @intCast(str.len)), &size);
 
@@ -1174,6 +1174,12 @@ pub const Canvas = struct {
 
         pub fn stroke(self: *DrawContextImpl) void {
             self.path.clearRetainingCapacity();
+        }
+
+        pub fn setStrokeWidth(self: *DrawContextImpl, width: f32) void {
+            _ = self;
+            _ = width;
+            // TODO: implement stroke width for GDI/GDI+ backend
         }
     };
 
@@ -1283,7 +1289,9 @@ pub const TextField = struct {
         const utf16Slice = buf[0..realLen];
 
         self.text_utf8.clearAndFree(lib.internal.allocator);
-        std.unicode.utf16LeToUtf8ArrayList(&self.text_utf8, utf16Slice) catch @panic("OOM");
+        const utf8 = std.unicode.utf16LeToUtf8Alloc(lib.internal.allocator, utf16Slice) catch @panic("OOM");
+        defer lib.internal.allocator.free(utf8);
+        self.text_utf8.appendSlice(lib.internal.allocator, utf8) catch @panic("OOM");
         self.text_utf8.append(lib.internal.allocator, 0) catch @panic("OOM");
         return self.text_utf8.items[0 .. self.text_utf8.items.len - 1 :0];
     }
@@ -1457,7 +1465,7 @@ pub const CheckBox = struct {
         const hwnd = win32.CreateWindowExW(win32.WS_EX_LEFT, // dwExtStyle
             L("BUTTON"), // lpClassName
             L(""), // lpWindowName
-            @as(win32.WINDOW_STYLE, @enumFromInt(@intFromEnum(win32.WS_TABSTOP) | @intFromEnum(win32.WS_CHILD) | win32.BS_AUTOCHECKBOX)), // dwStyle
+            @as(win32.WINDOW_STYLE, @bitCast(@as(u32, @bitCast(win32.WINDOW_STYLE{ .TABSTOP = 1, .CHILD = 1 })) | win32Backend.BS_AUTOCHECKBOX)), // dwStyle
             0, // X
             0, // Y
             100, // nWidth
@@ -1522,7 +1530,7 @@ pub const RadioButton = struct {
         const hwnd = win32.CreateWindowExW(win32.WS_EX_LEFT,
             L("BUTTON"),
             L(""),
-            @as(win32.WINDOW_STYLE, @enumFromInt(@intFromEnum(win32.WS_TABSTOP) | @intFromEnum(win32.WS_CHILD) | win32Backend.BS_AUTORADIOBUTTON)),
+            @as(win32.WINDOW_STYLE, @bitCast(@as(u32, @bitCast(win32.WINDOW_STYLE{ .TABSTOP = 1, .CHILD = 1 })) | win32Backend.BS_AUTORADIOBUTTON)),
             0, 0, 100, 100,
             defaultWHWND,
             null,
@@ -1654,7 +1662,7 @@ pub const Slider = struct {
             // Set tick frequency based on the range and tick count
             const range = @as(i32, @intFromFloat((self.max - self.min) / self.stepSize));
             const freq = @divTrunc(range, @as(i32, @intCast(count - 1)));
-            _ = win32.SendMessageW(self.peer, win32Backend.TBM_SETTICFREQ, freq, 0);
+            _ = win32.SendMessageW(self.peer, win32Backend.TBM_SETTICFREQ, @intCast(freq), 0);
         }
     }
 
@@ -1995,7 +2003,7 @@ pub const ScrollView = struct {
         const height = parent.bottom - parent.top;
 
         // Resize the child component to its preferred size (while keeping its current position)
-        const preferred = self.widget.?.getPreferredSize(lib.Size.init(std.math.maxInt(u32), std.math.maxInt(u32)));
+        const preferred = self.widget.?.getPreferredSize(lib.Size.init(std.math.floatMax(f32), std.math.floatMax(f32)));
 
         const child = win32.GetWindow(hwnd, win32.GW_CHILD);
         _ = win32.MoveWindow(
@@ -2187,6 +2195,11 @@ pub const AudioGenerator = struct {
         _ = self;
     }
 };
+
+pub fn postEmptyEvent() void {
+    // Post a null message to wake up the event loop from GetMessageW
+    _ = win32.PostMessageW(defaultWHWND, win32.WM_NULL, 0, 0);
+}
 
 pub fn runStep(step: shared.EventLoopStep) bool {
     var msg: MSG = undefined;
