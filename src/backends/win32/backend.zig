@@ -806,32 +806,46 @@ pub fn Events(comptime T: type) type {
                         handler(@as(u32, @intCast(rect.right - rect.left)), @as(u32, @intCast(rect.bottom - rect.top)), data.userdata);
                 },
                 win32.WM_HSCROLL => {
-                    const data = getEventUserData(hwnd);
-                    var scrollInfo = std.mem.zeroInit(win32.SCROLLINFO, .{
-                        .cbSize = @sizeOf(win32.SCROLLINFO),
-                        .fMask = win32.SIF_POS,
-                    });
-                    _ = win32.GetScrollInfo(hwnd, win32.SB_HORZ, &scrollInfo);
-
-                    const currentScroll = @as(u32, @intCast(scrollInfo.nPos));
-                    const newPos = switch (@as(u16, @truncate(wp))) {
-                        win32.SB_PAGEUP => currentScroll -| 50,
-                        win32.SB_PAGEDOWN => currentScroll + 50,
-                        win32.SB_LINEUP => currentScroll -| 5,
-                        win32.SB_LINEDOWN => currentScroll + 5,
-                        win32.SB_THUMBPOSITION, win32.SB_THUMBTRACK => wp >> 16,
-                        else => currentScroll,
-                    };
-
-                    if (newPos != currentScroll) {
-                        var horizontalScrollInfo = std.mem.zeroInit(win32.SCROLLINFO, .{
+                    if (lp != 0) {
+                        // WM_HSCROLL from a trackbar child control (slider)
+                        const trackbar_hwnd: HWND = @ptrFromInt(@as(usize, @bitCast(lp)));
+                        const child_data = getEventUserData(trackbar_hwnd);
+                        const pos = win32.SendMessageW(trackbar_hwnd, win32Backend.TBM_GETPOS, 0, 0);
+                        // Convert trackbar integer position to actual value using stepSize
+                        const slider_ptr: ?*Slider = if (child_data.peerPtr) |ptr| @ptrCast(@alignCast(ptr)) else null;
+                        const step_size: f32 = if (slider_ptr) |s| s.stepSize else 1.0;
+                        const value: f32 = @as(f32, @floatFromInt(pos)) * step_size;
+                        if (child_data.user.propertyChangeHandler) |handler|
+                            handler("value", @ptrCast(&value), child_data.userdata);
+                    } else {
+                        // WM_HSCROLL from the window's own horizontal scrollbar
+                        const data = getEventUserData(hwnd);
+                        var scrollInfo = std.mem.zeroInit(win32.SCROLLINFO, .{
                             .cbSize = @sizeOf(win32.SCROLLINFO),
                             .fMask = win32.SIF_POS,
-                            .nPos = @as(c_int, @intCast(newPos)),
                         });
-                        _ = win32.SetScrollInfo(hwnd, win32.SB_HORZ, &horizontalScrollInfo, 1);
-                        if (@hasDecl(T, "onHScroll")) {
-                            T.onHScroll(data, hwnd, newPos);
+                        _ = win32.GetScrollInfo(hwnd, win32.SB_HORZ, &scrollInfo);
+
+                        const currentScroll = @as(u32, @intCast(scrollInfo.nPos));
+                        const newPos = switch (@as(u16, @truncate(wp))) {
+                            win32.SB_PAGEUP => currentScroll -| 50,
+                            win32.SB_PAGEDOWN => currentScroll + 50,
+                            win32.SB_LINEUP => currentScroll -| 5,
+                            win32.SB_LINEDOWN => currentScroll + 5,
+                            win32.SB_THUMBPOSITION, win32.SB_THUMBTRACK => wp >> 16,
+                            else => currentScroll,
+                        };
+
+                        if (newPos != currentScroll) {
+                            var horizontalScrollInfo = std.mem.zeroInit(win32.SCROLLINFO, .{
+                                .cbSize = @sizeOf(win32.SCROLLINFO),
+                                .fMask = win32.SIF_POS,
+                                .nPos = @as(c_int, @intCast(newPos)),
+                            });
+                            _ = win32.SetScrollInfo(hwnd, win32.SB_HORZ, &horizontalScrollInfo, 1);
+                            if (@hasDecl(T, "onHScroll")) {
+                                T.onHScroll(data, hwnd, newPos);
+                            }
                         }
                     }
                 },
