@@ -165,7 +165,7 @@ pub extern "user32" fn EnumDisplaySettingsW(
     lpszDeviceName: ?[*:0]const u16,
     iModeNum: u32,
     lpDevMode: ?*win32.DEVMODEW,
-) callconv(@import("std").os.windows.WINAPI) win32.BOOL;
+) callconv(.winapi) win32.BOOL;
 
 pub fn getNumberOfVideoModes(self: *Monitor) usize {
     var count: u32 = 0;

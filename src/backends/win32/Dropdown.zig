@@ -74,7 +74,7 @@ pub fn setValues(self: *Dropdown, values: []const []const u8) void {
     const duplicated = allocator.allocSentinel(?[*:0]const u16, values.len, null) catch return;
     errdefer allocator.free(duplicated);
     for (values, 0..) |value, i| {
-        const utf16 = std.unicode.utf8ToUtf16LeWithNull(allocator, value) catch return;
+        const utf16 = std.unicode.utf8ToUtf16LeAllocZ(allocator, value) catch return;
         duplicated[i] = utf16.ptr;
         std.debug.assert(win32.SendMessageW(self.peer, win32.CB_ADDSTRING, 0, @bitCast(@intFromPtr(utf16.ptr))) != win32.CB_ERR);
     }

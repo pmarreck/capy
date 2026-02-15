@@ -22,7 +22,7 @@ const MSG = win32.MSG;
 const WPARAM = win32.WPARAM;
 const LPARAM = win32.LPARAM;
 const LRESULT = win32.LRESULT;
-const WINAPI = std.os.windows.WINAPI;
+const WINAPI = std.builtin.CallingConvention.winapi;
 
 // Common Control: Tabs
 const TCM_FIRST = 0x1300;
@@ -280,7 +280,7 @@ pub fn isDarkMode() bool {
         win32.KEY_READ,
         &hkey,
     );
-    if (status != @as(i32, 0)) return false;
+    if (status != .NO_ERROR) return false;
     defer _ = win32.RegCloseKey(hkey.?);
 
     var value: u32 = 1; // default: light mode
@@ -756,7 +756,7 @@ pub fn Events(comptime T: type) type {
                                         if (di.item.pszText) |out_buf| {
                                             const max_chars: usize = @intCast(di.item.cchTextMax);
                                             if (max_chars > 0) {
-                                                const utf16 = std.unicode.utf8ToUtf16LeWithNull(lib.internal.allocator, text) catch return 0;
+                                                const utf16 = std.unicode.utf8ToUtf16LeAllocZ(lib.internal.allocator, text) catch return 0;
                                                 defer lib.internal.allocator.free(utf16);
                                                 const copy_len = @min(utf16.len, max_chars - 1);
                                                 for (0..copy_len) |j| out_buf[j] = utf16[j];
@@ -1283,7 +1283,7 @@ pub const TextField = struct {
         const utf16Slice = buf[0..realLen];
 
         self.text_utf8.clearAndFree(lib.internal.allocator);
-        std.unicode.utf16LeToUtf8ArrayList(lib.internal.allocator, &self.text_utf8, utf16Slice) catch @panic("OOM");
+        std.unicode.utf16LeToUtf8ArrayList(&self.text_utf8, utf16Slice) catch @panic("OOM");
         self.text_utf8.append(lib.internal.allocator, 0) catch @panic("OOM");
         return self.text_utf8.items[0 .. self.text_utf8.items.len - 1 :0];
     }

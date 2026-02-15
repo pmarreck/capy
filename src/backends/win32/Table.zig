@@ -82,7 +82,7 @@ pub fn setColumns(self: *Table, columns: []const ColumnDef) void {
     // Add new columns
     const allocator = lib.internal.allocator;
     for (columns, 0..) |col_def, col_idx| {
-        const utf16 = std.unicode.utf8ToUtf16LeWithNull(allocator, col_def.header) catch continue;
+        const utf16 = std.unicode.utf8ToUtf16LeAllocZ(allocator, col_def.header) catch continue;
         defer allocator.free(utf16);
 
         var lvc = win32Backend.LVCOLUMNW{
@@ -164,7 +164,7 @@ pub fn handleDispInfo(self: *Table, nmhdr: *win32Backend.NMHDR) void {
         if (di.item.pszText) |out_buf| {
             const max_chars: usize = @intCast(di.item.cchTextMax);
             if (max_chars > 0) {
-                const utf16 = std.unicode.utf8ToUtf16LeWithNull(lib.internal.allocator, text) catch return;
+                const utf16 = std.unicode.utf8ToUtf16LeAllocZ(lib.internal.allocator, text) catch return;
                 defer lib.internal.allocator.free(utf16);
                 const copy_len = @min(utf16.len, max_chars - 1);
                 for (0..copy_len) |j| {
