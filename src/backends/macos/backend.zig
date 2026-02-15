@@ -914,7 +914,21 @@ pub fn Events(comptime T: type) type {
         }
 
         pub fn requestDraw(self: *T) !void {
-            self.peer.object.msgSend(void, "setNeedsDisplay:", .{@as(u8, @intFromBool(true))});
+            // setNeedsDisplay: must be called from the main thread on macOS.
+            // When called from a background thread (e.g. animation loops),
+            // dispatch via performSelectorOnMainThread: instead.
+            const NSThread = objc.getClass("NSThread").?;
+            const is_main = NSThread.msgSend(u8, "isMainThread", .{}) != 0;
+            if (is_main) {
+                self.peer.object.msgSend(void, "setNeedsDisplay:", .{@as(u8, 1)});
+            } else {
+                // display takes no arguments, so performSelectorOnMainThread: works cleanly
+                self.peer.object.msgSend(void, "performSelectorOnMainThread:withObject:waitUntilDone:", .{
+                    objc.sel("display"),
+                    @as(?*anyopaque, null),
+                    @as(u8, 0), // NO — don't block the background thread
+                });
+            }
         }
 
         pub fn deinit(self: *const T) void {
@@ -1525,6 +1539,33 @@ pub const Container = struct {
             @floatFromInt(height),
         ));
         widgetSizeChanged(peer, width, height);
+
+        // If the resized widget is an NSScrollView, propagate the size to its
+        // document view so the child container layout has correct available space.
+        // GTK handles this automatically; on macOS we must do it explicitly.
+        const class_name = std.mem.sliceTo(objc.c.object_getClassName(peer.object.value), 0);
+        if (std.mem.eql(u8, class_name, "NSScrollView")) {
+            const doc_view = peer.object.msgSend(objc.Object, "documentView", .{});
+            if (doc_view.value != null) {
+                if (getEventDataFromIvar(doc_view)) |doc_data| {
+                    const content_size = peer.object.msgSend(AppKit.CGSize, "contentSize", .{});
+                    const vp_w: u32 = @intFromFloat(@max(content_size.width, 0));
+
+                    // Phase 1: Set document view to viewport width × large height so
+                    // the column layout gives children their preferred sizes (not compressed).
+                    doc_view.setProperty("frame", AppKit.NSRect.make(0, 0, content_size.width, 100000));
+                    const doc_peer = GuiWidget{ .object = doc_view, .data = doc_data };
+                    widgetSizeChanged(doc_peer, vp_w, 100000);
+
+                    // Phase 2: After relayout, measure actual content extent and
+                    // shrink-wrap the document view. If content > viewport, scrollbars appear.
+                    const extent = maxSubviewExtent(doc_view);
+                    const final_h = @max(extent.height, content_size.height);
+                    doc_view.setProperty("frame", AppKit.NSRect.make(0, 0, content_size.width, final_h));
+                    doc_data.actual_height = @intFromFloat(@min(@max(final_h, 0), @as(AppKit.CGFloat, @floatFromInt(std.math.maxInt(u31)))));
+                }
+            }
+        }
     }
 
     pub fn setTabOrder(self: *const Container, peers: []const GuiWidget) void {

@@ -44,6 +44,55 @@ pub const CapyRunOptions = struct {
     wasm_debug_requests: bool = true,
 };
 
+/// Wraps a PNG file in ICNS format using the ic09 (512x512) slot.
+/// Modern macOS (10.7+) reads raw PNG directly from ICNS entries,
+/// so no image decoding or re-encoding is needed at build time.
+pub fn generateIcns(allocator: std.mem.Allocator, png_data: []const u8) ![]u8 {
+    const entry_size: u32 = @intCast(8 + png_data.len);
+    const file_size: u32 = @intCast(8 + entry_size);
+    const buf = try allocator.alloc(u8, file_size);
+    @memcpy(buf[0..4], "icns");
+    std.mem.writeInt(u32, buf[4..8], file_size, .big);
+    @memcpy(buf[8..12], "ic09"); // 512x512 PNG slot
+    std.mem.writeInt(u32, buf[12..16], entry_size, .big);
+    @memcpy(buf[16..], png_data);
+    return buf;
+}
+
+/// Generates an Info.plist XML string for a macOS .app bundle.
+pub fn generateInfoPlist(allocator: std.mem.Allocator, app_name: []const u8, exe_name: []const u8, has_icon: bool) ![]const u8 {
+    const icon_entry = if (has_icon)
+        "    <key>CFBundleIconFile</key>\n    <string>app.icns</string>\n"
+    else
+        "";
+
+    return std.fmt.allocPrint(allocator,
+        \\<?xml version="1.0" encoding="UTF-8"?>
+        \\<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        \\<plist version="1.0">
+        \\<dict>
+        \\    <key>CFBundleName</key>
+        \\    <string>{s}</string>
+        \\    <key>CFBundleExecutable</key>
+        \\    <string>{s}</string>
+        \\    <key>CFBundleIdentifier</key>
+        \\    <string>org.capy.{s}</string>
+        \\    <key>CFBundlePackageType</key>
+        \\    <string>APPL</string>
+        \\    <key>CFBundleVersion</key>
+        \\    <string>1.0</string>
+        \\    <key>CFBundleShortVersionString</key>
+        \\    <string>1.0</string>
+        \\{s}    <key>NSHighResolutionCapable</key>
+        \\    <true/>
+        \\    <key>NSSupportsAutomaticGraphicsSwitching</key>
+        \\    <true/>
+        \\</dict>
+        \\</plist>
+        \\
+    , .{ app_name, exe_name, exe_name, icon_entry });
+}
+
 /// Step used to run a web server for WebAssembly apps
 const WebServerStep = struct {
     step: std.Build.Step,

@@ -97,7 +97,7 @@ pub fn main() !void {
         capy.alignment(.{}, capy.column(.{}, .{
             computationLabel,
             capy.grid(.{
-                .template_columns = &.{ .{ .pixels = 100 }, .{ .pixels = 100 }, .{ .pixels = 100 }, .{ .pixels = 200 } },
+                .template_columns = &.{ .{ .pixels = 100 }, .{ .pixels = 100 }, .{ .pixels = 100 }, .{ .pixels = 100 } },
                 .template_rows = &.{ .{ .pixels = 60 }, .{ .pixels = 60 }, .{ .pixels = 60 }, .{ .pixels = 60 }, .{ .pixels = 60 } },
                 .column_spacing = 10,
                 .row_spacing = 10,

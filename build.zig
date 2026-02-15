@@ -1,7 +1,8 @@
 const std = @import("std");
-pub const runStep = @import("build_capy.zig").runStep;
-pub const CapyBuildOptions = @import("build_capy.zig").CapyBuildOptions;
-pub const CapyRunOptions = @import("build_capy.zig").CapyRunOptions;
+const build_capy = @import("build_capy.zig");
+pub const runStep = build_capy.runStep;
+pub const CapyBuildOptions = build_capy.CapyBuildOptions;
+pub const CapyRunOptions = build_capy.CapyRunOptions;
 const AndroidSdk = @import("android/Sdk.zig");
 
 const LazyPath = std.Build.LazyPath;
@@ -149,6 +150,19 @@ pub fn build(b: *std.Build) !void {
     });
     try installCapyDependencies(b, module, options);
 
+    const is_macos = target.result.os.tag == .macos;
+
+    // Pre-generate ICNS data for macOS .app bundles (read icon PNG once, wrap in ICNS header)
+    const icns_data: ?[]const u8 = if (is_macos) blk: {
+        if (resolved_icon) |icon_rel| {
+            const file = try std.fs.cwd().openFile(b.pathFromRoot(icon_rel), .{});
+            defer file.close();
+            const png_data = try file.readToEndAlloc(b.allocator, 10 * 1024 * 1024);
+            break :blk try build_capy.generateIcns(b.allocator, png_data);
+        }
+        break :blk null;
+    } else null;
+
     const examples_dir_path = b.path("examples").getPath(b);
     var examples_dir = try std.fs.cwd().openDir(examples_dir_path, .{ .iterate = true });
     defer examples_dir.close();
@@ -177,7 +191,6 @@ pub fn build(b: *std.Build) !void {
             });
             exe.root_module.addImport("capy", module);
 
-            const install_step = b.addInstallArtifact(exe, .{});
             const is_working = blk: {
                 for (broken) |broken_name| {
                     if (std.mem.eql(u8, name, broken_name))
@@ -185,9 +198,43 @@ pub fn build(b: *std.Build) !void {
                 }
                 break :blk true;
             };
-            if (is_working) {
-                b.getInstallStep().dependOn(&install_step.step);
+
+            // macOS: create .app bundle; other platforms: install bare binary
+            if (is_macos) {
+                const exe_install = b.addInstallArtifact(exe, .{
+                    .dest_dir = .{ .override = .{ .custom = b.fmt("bin/{s}.app/Contents/MacOS", .{name}) } },
+                });
+
+                const bundle_wf = b.addWriteFiles();
+                const plist = try build_capy.generateInfoPlist(
+                    b.allocator,
+                    app_name orelse name,
+                    name,
+                    icns_data != null,
+                );
+                _ = bundle_wf.add(b.fmt("{s}.app/Contents/Info.plist", .{name}), plist);
+
+                if (icns_data) |icns| {
+                    _ = bundle_wf.add(b.fmt("{s}.app/Contents/Resources/app.icns", .{name}), icns);
+                }
+
+                const bundle_install = b.addInstallDirectory(.{
+                    .source_dir = bundle_wf.getDirectory(),
+                    .install_dir = .bin,
+                    .install_subdir = "",
+                });
+
+                if (is_working) {
+                    b.getInstallStep().dependOn(&exe_install.step);
+                    b.getInstallStep().dependOn(&bundle_install.step);
+                }
+            } else {
+                const install_step = b.addInstallArtifact(exe, .{});
+                if (is_working) {
+                    b.getInstallStep().dependOn(&install_step.step);
+                }
             }
+
             const run_cmd = try runStep(exe, .{});
 
             const run_step = b.step(name, "Run this example");
