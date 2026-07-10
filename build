@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+
+set -u
+
+nix build .#packages."$(nix eval --impure --raw --expr builtins.currentSystem)".default "$@"

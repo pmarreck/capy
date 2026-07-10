@@ -190,18 +190,41 @@ pub fn openFileDialog(options: shared.FileDialogOptions) ?[:0]const u8 {
                         c.gtk_file_filter_add_pattern(filter, pat_z.ptr);
                     }
                 }
-                c.gtk_file_chooser_add_filter(@ptrCast(dialog), filter);
+                c.gtk_file_chooser_add_filter(@ptrCast(@alignCast(dialog)), filter);
             }
         }
 
-        // Show and run synchronously
-        const response = c.gtk_native_dialog_run(@ptrCast(dialog));
-        defer c.g_object_unref(@ptrCast(dialog));
+        const ResponseState = struct {
+            done: bool = false,
+            response: c_int = c.GTK_RESPONSE_CANCEL,
+
+            fn onResponse(_: *c.GtkNativeDialog, response: c_int, userdata: ?*anyopaque) callconv(.c) void {
+                const state: *@This() = @ptrCast(@alignCast(userdata.?));
+                state.response = response;
+                state.done = true;
+            }
+        };
+        var response_state: ResponseState = .{};
+        _ = c.g_signal_connect_data(
+            dialog,
+            "response",
+            @as(c.GCallback, @ptrCast(&ResponseState.onResponse)),
+            &response_state,
+            null,
+            c.G_CONNECT_DEFAULT,
+        );
+        c.gtk_native_dialog_show(@ptrCast(@alignCast(dialog)));
+        while (!response_state.done) {
+            _ = c.g_main_context_iteration(null, 1);
+        }
+        const response = response_state.response;
+        c.gtk_native_dialog_hide(@ptrCast(@alignCast(dialog)));
+        defer c.g_object_unref(@ptrCast(@alignCast(dialog)));
 
         if (response == c.GTK_RESPONSE_ACCEPT) {
-            const gfile = c.gtk_file_chooser_get_file(@ptrCast(dialog));
+            const gfile = c.gtk_file_chooser_get_file(@ptrCast(@alignCast(dialog)));
             if (gfile) |file| {
-                defer c.g_object_unref(@ptrCast(file));
+                defer c.g_object_unref(@ptrCast(@alignCast(file)));
                 const cpath = c.g_file_get_path(file);
                 if (cpath) |p| {
                     defer c.g_free(p);
@@ -222,7 +245,7 @@ pub fn isDarkMode() bool {
     const settings = c.gtk_settings_get_default() orelse return false;
     var dark: c.gboolean = 0;
     c.g_object_get(
-        @as(*c.GObject, @ptrCast(settings)),
+        @as(*c.GObject, @ptrCast(@alignCast(settings))),
         "gtk-application-prefer-dark-theme",
         &dark,
         @as(?*anyopaque, null),
@@ -232,7 +255,7 @@ pub fn isDarkMode() bool {
     // Also check the theme name for "dark" (case-insensitive)
     var theme_name: ?[*:0]const u8 = null;
     c.g_object_get(
-        @as(*c.GObject, @ptrCast(settings)),
+        @as(*c.GObject, @ptrCast(@alignCast(settings))),
         "gtk-theme-name",
         &theme_name,
         @as(?*anyopaque, null),

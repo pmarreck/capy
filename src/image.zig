@@ -4,6 +4,7 @@ const backend = @import("backend.zig");
 const internal = @import("internal.zig");
 const Size = @import("data.zig").Size;
 const DataWrapper = @import("data.zig").DataWrapper;
+const runtime = @import("runtime.zig");
 
 // TODO: use zigimg's structs instead of duplicating efforts
 const Colorspace = @import("color.zig").Colorspace;
@@ -38,9 +39,10 @@ pub const ImageData = struct {
     }
 
     pub fn fromFile(allocator: std.mem.Allocator, path: []const u8) !ImageData {
-        const file = try std.fs.cwd().openFile(path, .{ .mode = .read_only });
+        const file = try std.Io.Dir.cwd().openFile(runtime.io(), path, .{});
+        defer file.close(runtime.io());
         var file_read_buf: [4096]u8 = undefined;
-        var stream = zigimg.io.ReadStream.initFile(file, &file_read_buf);
+        var stream = zigimg.io.ReadStream.initFile(runtime.io(), file, &file_read_buf);
         return readFromStream(allocator, &stream);
     }
 

@@ -1,22 +1,21 @@
 const std = @import("std");
-const internal = @import("internal.zig");
+const runtime = @import("runtime.zig");
 
 const OutputTarget = enum { disabled, stdout, stderr, file };
 
 var target: OutputTarget = .disabled;
-var file_handle: ?std.fs.File = null;
-var mutex: std.Thread.Mutex = .{};
+var file_handle: ?std.Io.File = null;
+var mutex: runtime.Lock = .{};
 
 pub fn init() void {
-    const env_val = std.process.getEnvVarOwned(internal.allocator, "CAPY_UI_STATE_CHANGES_TO") catch return;
-    defer internal.allocator.free(env_val);
+    const env_val = runtime.getEnv("CAPY_UI_STATE_CHANGES_TO") orelse return;
 
     if (std.mem.eql(u8, env_val, "@stdout")) {
         target = .stdout;
     } else if (std.mem.eql(u8, env_val, "@stderr")) {
         target = .stderr;
     } else {
-        file_handle = std.fs.cwd().createFile(env_val, .{}) catch |err| {
+        file_handle = std.Io.Dir.cwd().createFile(runtime.io(), env_val, .{}) catch |err| {
             std.debug.print("CAPY_UI_STATE_CHANGES_TO: failed to open '{s}': {s}\n", .{ env_val, @errorName(err) });
             return;
         };
@@ -25,7 +24,7 @@ pub fn init() void {
 }
 
 pub fn deinit() void {
-    if (file_handle) |fh| fh.close();
+    if (file_handle) |fh| fh.close(runtime.io());
     file_handle = null;
     target = .disabled;
 }
@@ -60,14 +59,14 @@ pub fn logPropertyChange(
         new_value_str,
     }) catch return;
 
-    file.writeAll(line) catch {};
+    file.writeStreamingAll(runtime.io(), line) catch {};
 }
 
-fn getFile() ?std.fs.File {
+fn getFile() ?std.Io.File {
     return switch (target) {
         .disabled => null,
-        .stdout => std.fs.File.stdout(),
-        .stderr => std.fs.File.stderr(),
+        .stdout => std.Io.File.stdout(),
+        .stderr => std.Io.File.stderr(),
         .file => file_handle,
     };
 }

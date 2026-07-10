@@ -66,8 +66,8 @@ pub fn init(b: *Builder, user_config: ?UserConfig, toolchains: ToolchainVersions
         const d8 = std.fs.path.join(b.allocator, &[_][]const u8{ actual_user_config.android_sdk_root, "build-tools", toolchains.build_tools_version, "d8" ++ exe }) catch unreachable;
         const adb = blk1: {
             const adb_sdk = std.fs.path.join(b.allocator, &[_][]const u8{ actual_user_config.android_sdk_root, "platform-tools", "adb" ++ exe }) catch unreachable;
-            if (!auto_detect.fileExists(adb_sdk)) {
-                break :blk1 auto_detect.findProgramPath(b.allocator, "adb") orelse @panic("No adb found");
+            if (!auto_detect.fileExists(b, adb_sdk)) {
+                break :blk1 auto_detect.findProgramPath(b, "adb") orelse @panic("No adb found");
             }
             break :blk1 adb_sdk;
         };
@@ -95,7 +95,7 @@ pub fn init(b: *Builder, user_config: ?UserConfig, toolchains: ToolchainVersions
                 .target = b.resolveTargetQuery(.{}),
             }),
         });
-        zip_add.addCSourceFile(.{
+        zip_add.root_module.addCSourceFile(.{
             .file = b.path(sdkRoot() ++ "/vendor/kuba-zip/zip.c"),
             .flags = &[_][]const u8{
                 "-std=c99",
@@ -103,8 +103,8 @@ pub fn init(b: *Builder, user_config: ?UserConfig, toolchains: ToolchainVersions
                 "-D_POSIX_C_SOURCE=200112L",
             },
         });
-        zip_add.addIncludePath(b.path(sdkRoot() ++ "/vendor/kuba-zip"));
-        zip_add.linkLibC();
+        zip_add.root_module.addIncludePath(b.path(sdkRoot() ++ "/vendor/kuba-zip"));
+        zip_add.root_module.link_libc = true;
 
         break :blk HostTools{
             .zip_add = zip_add,
@@ -970,21 +970,19 @@ fn createLibCFile(sdk: *const Sdk, version: AndroidVersion, folder_name: []const
     var contents: std.ArrayList(u8) = .empty;
     errdefer contents.deinit(sdk.b.allocator);
 
-    var writer = contents.writer(sdk.b.allocator);
-
     //  The directory that contains `stdlib.h`.
     //  On POSIX-like systems, include directories be found with: `cc -E -Wp,-v -xc /dev/null
-    try writer.print("include_dir={s}\n", .{include_dir});
+    try contents.print(sdk.b.allocator, "include_dir={s}\n", .{include_dir});
 
     // The system-specific include directory. May be the same as `include_dir`.
     // On Windows it's the directory that includes `vcruntime.h`.
     // On POSIX it's the directory that includes `sys/errno.h`.
-    try writer.print("sys_include_dir={s}\n", .{sys_include_dir});
+    try contents.print(sdk.b.allocator, "sys_include_dir={s}\n", .{sys_include_dir});
 
-    try writer.print("crt_dir={s}\n", .{crt_dir});
-    try writer.writeAll("msvc_lib_dir=\n");
-    try writer.writeAll("kernel32_lib_dir=\n");
-    try writer.writeAll("gcc_dir=\n");
+    try contents.print(sdk.b.allocator, "crt_dir={s}\n", .{crt_dir});
+    try contents.appendSlice(sdk.b.allocator, "msvc_lib_dir=\n");
+    try contents.appendSlice(sdk.b.allocator, "kernel32_lib_dir=\n");
+    try contents.appendSlice(sdk.b.allocator, "gcc_dir=\n");
 
     const step = sdk.b.addWriteFiles();
     const file_source = step.add(fname, contents.items);
@@ -1066,7 +1064,7 @@ pub const KeyConfig = struct {
 /// A build step that initializes a new key store from the given configuration.
 /// `android_config.key_store` must be non-`null` as it is used to initialize the key store.
 pub fn initKeystore(sdk: Sdk, key_store: KeyStore, key_config: KeyConfig) *Step {
-    if (auto_detect.fileExists(key_store.file)) {
+    if (auto_detect.fileExists(sdk.b, key_store.file)) {
         std.log.warn("keystore already exists: {s}", .{key_store.file});
         return sdk.b.step("init_keystore_noop", "Do nothing, since key exists");
     } else {

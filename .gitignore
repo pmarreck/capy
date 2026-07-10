@@ -1,5 +1,8 @@
 .zig-cache/
 zig-out/
+zig-pkg/
+result
+result-*
 .build_config/
 .zigmod/
 kcov-output/

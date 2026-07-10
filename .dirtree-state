@@ -1,0 +1,12 @@
+# Dirtree: Stateful directory trees in the CLI for humans and LLMs. https://github.com/pmarreck/dirtree
+ver=1.2
+depth=3
+
+annotate=[
+	MISTAKES.md = Repository-specific agent mistakes and prevention notes.
+	PLAN.md = Current Mechatron Prime CI migration checklist.
+	build = Canonical Nix-backed ReleaseFast shared-library build entry point.
+	src/runtime.zig = Zig 0.16 runtime adapter for synchronous I/O, clocks, environment, and locks.
+	test = Master test runner for the CI contract and complete Nix unit check.
+	tests/integration/ci_contract = Guards the Mechatron Prime package/check and portable CPU contract.
+]

@@ -3,11 +3,12 @@ const c = @import("gtk.zig");
 const lib = @import("../../capy.zig");
 const common = @import("common.zig");
 const DrawContext = @import("../../backend.zig").DrawContext;
+const runtime = @import("../../runtime.zig");
 
 const ImageData = @This();
 
 peer: *c.GdkPixbuf,
-mutex: std.Thread.Mutex = .{},
+mutex: runtime.Lock = .{},
 width: usize,
 height: usize,
 

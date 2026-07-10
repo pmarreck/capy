@@ -296,6 +296,6 @@ pub fn runEventLoop() void {
 
 test {
     _ = @import("fuzz.zig"); // testing the fuzzing library
-    std.testing.refAllDeclsRecursive(@This());
+    std.testing.refAllDecls(@This());
     _ = @import("components/Alignment.zig");
 }

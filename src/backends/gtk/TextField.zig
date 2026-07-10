@@ -66,5 +66,5 @@ pub fn setReadOnly(self: *TextField, readOnly: bool) void {
 }
 
 pub fn _deinit(self: *const TextField) void {
-    self.dup_text.deinit(lib.internal.allocator);
+    @constCast(&self.dup_text).deinit(lib.internal.allocator);
 }

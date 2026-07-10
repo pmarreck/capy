@@ -57608,7 +57608,7 @@ pub const G_TYPE_OBJECT = G_TYPE_MAKE_FUNDAMENTAL(@as(c_int, 20));
 pub const G_TYPE_VARIANT = G_TYPE_MAKE_FUNDAMENTAL(@as(c_int, 21));
 pub inline fn G_TYPE_MAKE_FUNDAMENTAL(x: anytype) GType {
     _ = &x;
-    return @import("std").zig.c_translation.cast(GType, x << G_TYPE_FUNDAMENTAL_SHIFT);
+    return @intCast(x << G_TYPE_FUNDAMENTAL_SHIFT);
 }
 pub const G_TYPE_RESERVED_GLIB_FIRST = @as(c_int, 22);
 pub const G_TYPE_RESERVED_GLIB_LAST = @as(c_int, 31);

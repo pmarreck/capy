@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -u
+
+failures=0
+
+fail() {
+	printf 'FAIL: %s\n' "$1" >&2
+	failures=$((failures + 1))
+}
+
+expect_flake_attr() {
+	local attr="$1"
+	if ! nix eval --raw ".#${attr}.drvPath" >/dev/null 2>&1; then
+		fail "flake output ${attr} must evaluate to a derivation"
+	fi
+}
+
+if ! rg -q 'zigpkgs\."0\.16\.0"' flake.nix; then
+	fail 'flake must pin Zig 0.16.0'
+fi
+
+if ! rg -q 'zig build shared .* -Dcpu=baseline' flake.nix; then
+	fail 'release package must target the portable baseline CPU'
+fi
+
+if ! rg -q 'zig build test-compile .* -Dcpu=baseline' flake.nix; then
+	fail 'test check must compile for the portable baseline CPU'
+fi
+
+if [[ ! -x ./build ]]; then
+	fail './build must exist and be executable'
+fi
+
+if [[ ! -x ./test ]]; then
+	fail './test must exist and be executable'
+fi
+
+expect_flake_attr packages.x86_64-linux.default
+expect_flake_attr checks.x86_64-linux.build
+expect_flake_attr checks.x86_64-linux.test
+
+if ((failures == 0)); then
+	printf 'Capy CI contract: PASS\n'
+fi
+
+exit "$failures"

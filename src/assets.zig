@@ -2,6 +2,7 @@
 const std = @import("std");
 const http = @import("http.zig");
 const internal = @import("internal.zig");
+const runtime = @import("runtime.zig");
 const log = std.log.scoped(.assets);
 const Uri = std.Uri;
 
@@ -10,10 +11,10 @@ const GetError = Uri.ParseError || http.SendRequestError || error{ UnsupportedSc
 pub const AssetHandle = struct {
     data: union(enum) {
         http: http.HttpResponse,
-        file: std.fs.File,
+        file: std.Io.File,
     },
 
-    pub const ReadError = http.HttpResponse.ReadError || std.fs.File.ReadError;
+    pub const ReadError = http.HttpResponse.ReadError || std.Io.File.ReadStreamingError;
 
     pub fn read(self: *AssetHandle, dest: []u8) ReadError!usize {
         switch (self.data) {
@@ -21,28 +22,31 @@ pub const AssetHandle = struct {
                 return try resp.read(dest);
             },
             .file => |file| {
-                return try file.read(dest);
+                return file.readStreaming(runtime.io(), &.{dest}) catch |err| switch (err) {
+                    error.EndOfStream => 0,
+                    else => |read_err| return read_err,
+                };
             },
         }
     }
 
     /// Read all contents into an allocated buffer
     pub fn readAllAlloc(self: *AssetHandle, alloc: std.mem.Allocator, max_size: usize) ![]u8 {
-        switch (self.data) {
-            .file => |file| {
-                return try file.readToEndAlloc(alloc, max_size);
-            },
-            .http => {
-                var result = std.ArrayList(u8).empty;
-                var buf: [4096]u8 = undefined;
-                while (true) {
-                    const n = try self.read(&buf);
-                    if (n == 0) break;
-                    try result.appendSlice(alloc, buf[0..n]);
-                }
-                return result.toOwnedSlice(alloc);
-            },
+        var result = std.ArrayList(u8).empty;
+        errdefer result.deinit(alloc);
+        var buf: [4096]u8 = undefined;
+        while (true) {
+            if (result.items.len == max_size) {
+                const overflow = try self.read(buf[0..1]);
+                if (overflow != 0) return error.StreamTooLong;
+                break;
+            }
+            const remaining = max_size - result.items.len;
+            const n = try self.read(buf[0..@min(buf.len, remaining)]);
+            if (n == 0) break;
+            try result.appendSlice(alloc, buf[0..n]);
         }
+        return result.toOwnedSlice(alloc);
     }
 
     pub fn deinit(self: *AssetHandle) void {
@@ -51,7 +55,7 @@ pub const AssetHandle = struct {
                 resp.deinit();
             },
             .file => |file| {
-                file.close();
+                file.close(runtime.io());
             },
         }
     }
@@ -67,24 +71,22 @@ pub fn get(url: []const u8) GetError!AssetHandle {
     log.debug("Loading {s}", .{url});
 
     if (std.mem.eql(u8, uri.scheme, "asset")) {
-        var buffer: [std.fs.max_path_bytes]u8 = undefined;
-        const cwd_path = try std.fs.realpath(".", &buffer);
-
-        var raw_path_buf: [std.fs.max_path_bytes]u8 = undefined;
+        var raw_path_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const raw_uri_path = uri.path.toRaw(&raw_path_buf) catch return error.InvalidPath;
+        const relative_asset_path = std.mem.trimStart(u8, raw_uri_path, "/\\");
 
-        const asset_path = try std.fs.path.join(internal.allocator, &.{ cwd_path, "assets/", raw_uri_path });
+        const asset_path = try std.fs.path.join(internal.allocator, &.{ "assets", relative_asset_path });
         defer internal.allocator.free(asset_path);
         log.debug("-> {s}", .{asset_path});
 
-        const file = try std.fs.openFileAbsolute(asset_path, .{ .mode = .read_only });
+        const file = try std.Io.Dir.cwd().openFile(runtime.io(), asset_path, .{});
         return AssetHandle{ .data = .{ .file = file } };
     } else if (std.mem.eql(u8, uri.scheme, "file")) {
-        var raw_path_buf2: [std.fs.max_path_bytes]u8 = undefined;
+        var raw_path_buf2: [std.Io.Dir.max_path_bytes]u8 = undefined;
         const raw_uri_path = uri.path.toRaw(&raw_path_buf2) catch return error.InvalidPath;
 
         log.debug("-> {s}", .{raw_uri_path});
-        const file = try std.fs.openFileAbsolute(raw_uri_path, .{ .mode = .read_only });
+        const file = try std.Io.Dir.openFileAbsolute(runtime.io(), raw_uri_path, .{});
         return AssetHandle{ .data = .{ .file = file } };
     } else if (std.mem.eql(u8, uri.scheme, "http") or std.mem.eql(u8, uri.scheme, "https")) {
         const request = http.HttpRequest.get(url);
@@ -133,4 +135,50 @@ test "unsupported scheme returns error" {
     // internal.allocator defaults to std.testing.allocator in test mode
     const result = get("ftp://example.com/file.png");
     try std.testing.expectError(error.UnsupportedScheme, result);
+}
+
+test "AssetHandle.readAllAlloc accepts exact limit and rejects oversized file" {
+    const tmp_root = runtime.getEnv("TMPDIR") orelse return error.MissingTmpDir;
+    var tmp_dir = try std.Io.Dir.openDirAbsolute(runtime.io(), tmp_root, .{});
+    defer tmp_dir.close(runtime.io());
+
+    var name_buffer: [96]u8 = undefined;
+    const fixture = fixture: for (0..1024) |suffix| {
+        const name = try std.fmt.bufPrint(&name_buffer, "capy-assets-read-limit-{d}", .{suffix});
+        const file = tmp_dir.createFile(runtime.io(), name, .{ .exclusive = true }) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            else => return err,
+        };
+        break :fixture .{ .name = name, .file = file };
+    } else return error.NoTemporaryFileNameAvailable;
+    defer tmp_dir.deleteFile(runtime.io(), fixture.name) catch |err| {
+        std.debug.panic("failed to remove TMPDIR asset fixture: {s}", .{@errorName(err)});
+    };
+
+    {
+        var fixture_file = fixture.file;
+        defer fixture_file.close(runtime.io());
+        try fixture_file.writeStreamingAll(runtime.io(), "abcde");
+    }
+
+    {
+        const file = try tmp_dir.openFile(runtime.io(), fixture.name, .{});
+        var handle = AssetHandle{ .data = .{ .file = file } };
+        defer handle.deinit();
+        const exact = try handle.readAllAlloc(std.testing.allocator, 5);
+        defer std.testing.allocator.free(exact);
+        try std.testing.expectEqualStrings("abcde", exact);
+    }
+
+    {
+        const file = try tmp_dir.openFile(runtime.io(), fixture.name, .{});
+        var handle = AssetHandle{ .data = .{ .file = file } };
+        defer handle.deinit();
+        if (handle.readAllAlloc(std.testing.allocator, 4)) |unexpected| {
+            std.testing.allocator.free(unexpected);
+            return error.TestExpectedError;
+        } else |err| {
+            try std.testing.expectEqual(error.StreamTooLong, err);
+        }
+    }
 }

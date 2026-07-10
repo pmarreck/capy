@@ -176,7 +176,7 @@ fn executeMain() void {
 pub const backendExport = struct {
     pub fn log(
         comptime message_level: std.log.Level,
-        comptime scope: @Type(.EnumLiteral),
+        comptime scope: @EnumLiteral(),
         comptime format: []const u8,
         args: anytype,
     ) void {

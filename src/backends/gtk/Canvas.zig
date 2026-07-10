@@ -5,7 +5,6 @@ const common = @import("common.zig");
 const shared = @import("../shared.zig");
 
 const Canvas = @This();
-const Window = @import("Window.zig");
 
 /// Actual GtkCanvas
 peer: *c.GtkWidget,
@@ -59,6 +58,7 @@ pub const DrawContextImpl = struct {
         }
 
         pub fn getTextSize(self: *TextLayout, str: []const u8) TextSize {
+            if (str.len == 0) return .{ .width = 0, .height = 0 };
             var width: c_int = undefined;
             var height: c_int = undefined;
             c.pango_layout_set_width(self._layout, if (self.wrap) |w| @as(c_int, @intFromFloat(@floor(w * @as(f64, c.PANGO_SCALE)))) else -1);
@@ -69,7 +69,8 @@ pub const DrawContextImpl = struct {
         }
 
         pub fn init() TextLayout {
-            const context = c.gtk_widget_create_pango_context(Window.randomWindow).?;
+            const font_map = c.pango_cairo_font_map_get_default();
+            const context = c.pango_font_map_create_context(font_map).?;
             return TextLayout{ ._context = context, ._layout = c.pango_layout_new(context).? };
         }
     };

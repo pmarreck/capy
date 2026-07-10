@@ -123,13 +123,13 @@ fn installCapyDependencies(b: *std.Build, module: *std.Build.Module, options: Ca
 
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
-    const optimize = b.standardOptimizeOption(.{});
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Optimization mode (default: ReleaseFast)") orelse .ReleaseFast;
     const app_name = b.option([]const u8, "app_name", "The name of the application, to be used for packaging purposes.");
     const icon_path = b.option([]const u8, "icon", "Path to app icon PNG (square, RGBA)");
 
     // Icon path fallback: -Dicon > assets/icon.png (if exists)
     const resolved_icon: ?[]const u8 = icon_path orelse blk: {
-        if (std.fs.cwd().access(b.pathFromRoot("assets/icon.png"), .{}))
+        if (std.Io.Dir.cwd().access(b.graph.io, b.pathFromRoot("assets/icon.png"), .{}))
             break :blk "assets/icon.png"
         else |_|
             break :blk null;
@@ -155,17 +155,20 @@ pub fn build(b: *std.Build) !void {
     // Pre-generate ICNS data for macOS .app bundles (read icon PNG once, wrap in ICNS header)
     const icns_data: ?[]const u8 = if (is_macos) blk: {
         if (resolved_icon) |icon_rel| {
-            const file = try std.fs.cwd().openFile(b.pathFromRoot(icon_rel), .{});
-            defer file.close();
-            const png_data = try file.readToEndAlloc(b.allocator, 10 * 1024 * 1024);
+            const png_data = try std.Io.Dir.cwd().readFileAlloc(
+                b.graph.io,
+                b.pathFromRoot(icon_rel),
+                b.allocator,
+                .limited(10 * 1024 * 1024),
+            );
             break :blk try build_capy.generateIcns(b.allocator, png_data);
         }
         break :blk null;
     } else null;
 
     const examples_dir_path = b.path("examples").getPath(b);
-    var examples_dir = try std.fs.cwd().openDir(examples_dir_path, .{ .iterate = true });
-    defer examples_dir.close();
+    var examples_dir = try std.Io.Dir.cwd().openDir(b.graph.io, examples_dir_path, .{ .iterate = true });
+    defer examples_dir.close(b.graph.io);
 
     const broken = switch (target.result.os.tag) {
         .windows => &[_][]const u8{ "osm-viewer", "fade", "slide-viewer", "demo", "notepad", "dev-tools" },
@@ -174,7 +177,7 @@ pub fn build(b: *std.Build) !void {
 
     var walker = try examples_dir.walk(b.allocator);
     defer walker.deinit();
-    while (try walker.next()) |entry| {
+    while (try walker.next(b.graph.io)) |entry| {
         if (entry.kind == .file and std.mem.eql(u8, std.fs.path.extension(entry.path), ".zig")) {
             const name = try std.mem.replaceOwned(u8, b.allocator, entry.path[0 .. entry.path.len - 4], std.fs.path.sep_str, "-");
             defer b.allocator.free(name);
@@ -252,7 +255,7 @@ pub fn build(b: *std.Build) !void {
         }),
         .version = std.SemanticVersion{ .major = 0, .minor = 4, .patch = 0 },
     });
-    lib.linkLibC();
+    lib.root_module.link_libc = true;
     lib.root_module.addImport("capy", module);
     const lib_install = b.addInstallArtifact(lib, .{});
     b.getInstallStep().dependOn(&lib_install.step);
@@ -275,6 +278,10 @@ pub fn build(b: *std.Build) !void {
 
     const test_step = b.step("test", "Run unit tests and also generate the documentation");
     test_step.dependOn(run_tests);
+
+    const install_tests = b.addInstallArtifact(tests, .{});
+    const test_compile_step = b.step("test-compile", "Compile the complete unit-test binary without running it");
+    test_compile_step.dependOn(&install_tests.step);
 
     //
     // Documentation generation

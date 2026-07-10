@@ -4,6 +4,7 @@ const internal = @import("internal.zig");
 const global_allocator = internal.allocator;
 const trait = @import("trait.zig");
 const AnimationController = @import("AnimationController.zig");
+const runtime = @import("runtime.zig");
 
 /// Compat wrapper: std.SinglyLinkedList in 0.15.2 became intrusive (no data payload).
 /// This recreates the old generic SinglyLinkedList(T) API with a Node that has a .data field.
@@ -136,7 +137,7 @@ pub const Easings = struct {
 
 fn Animation(comptime T: type) type {
     return struct {
-        start: std.time.Instant,
+        start: std.Io.Timestamp,
         /// Assume animation won't last more than 4000000 seconds
         duration: u32,
         min: T,
@@ -145,9 +146,8 @@ fn Animation(comptime T: type) type {
 
         /// Get the current value from the animation
         pub fn get(self: @This()) T {
-            const now = std.time.Instant.now() catch @panic("a monotonic clock is required for animations");
             const maxDiff = @as(f64, @floatFromInt(self.duration)) * @as(f64, std.time.ns_per_ms);
-            const diff: f64 = @floatFromInt(now.since(self.start));
+            const diff: f64 = @floatFromInt(runtime.elapsedNanosecondsSince(self.start));
             var t = diff / maxDiff;
             // Clamp t to [0, 1]
             t = std.math.clamp(t, 0.0, 1.0);
@@ -218,7 +218,7 @@ pub fn Atom(comptime T: type) type {
     return struct {
         value: if (isAnimatable) union(enum) { Single: T, Animated: Animation(T) } else T,
         // TODO: switch to a lock that allow concurrent reads but one concurrent write
-        lock: std.Thread.Mutex = .{},
+        lock: runtime.Lock = .{},
         /// List of every change listener listening to this atom.
         /// A linked list is used for minimal stack overhead and to take
         /// advantage of the fact that most Atoms don't have a
@@ -391,8 +391,7 @@ pub fn Atom(comptime T: type) type {
             if (!isAnimatable) return false;
             switch (self.value) {
                 .Animated => |animation| {
-                    const now = std.time.Instant.now() catch @panic("a monotonic clock is required for animations");
-                    if (now.since(animation.start) >= @as(u64, animation.duration) * std.time.ns_per_ms) {
+                    if (runtime.elapsedNanosecondsSince(animation.start) >= @as(u64, animation.duration) * std.time.ns_per_ms) {
                         self.value = .{ .Single = animation.max };
                         self.callHandlers();
                         return false;
@@ -411,8 +410,7 @@ pub fn Atom(comptime T: type) type {
             if (!isAnimatable) return false;
             switch (self.value) {
                 .Animated => |animation| {
-                    const now = std.time.Instant.now() catch return false;
-                    return now.since(animation.start) < @as(u64, animation.duration) * std.time.ns_per_ms;
+                    return runtime.elapsedNanosecondsSince(animation.start) < @as(u64, animation.duration) * std.time.ns_per_ms;
                 },
                 .Single => return false,
             }
@@ -426,7 +424,7 @@ pub fn Atom(comptime T: type) type {
             }
             const currentValue = self.get();
             self.value = .{ .Animated = Animation(T){
-                .start = std.time.Instant.now() catch @panic("a monotonic clock is required for animations"),
+                .start = runtime.monotonicNow(),
                 .duration = @as(u32, @intCast(duration)),
                 .min = currentValue,
                 .max = target,
@@ -813,7 +811,7 @@ pub fn ListAtom(comptime T: type) type {
         backing_list: ListType,
         length: Atom(usize),
         // TODO: since RwLock doesn't report deadlocks in Debug mode like Mutex does, do it manually here in ListAtom
-        lock: std.Thread.RwLock = .{},
+        lock: runtime.Lock = .{},
         /// List of every change listener listening to this atom.
         onChange: ChangeListenerList = .{},
         allocator: std.mem.Allocator,
@@ -835,7 +833,7 @@ pub fn ListAtom(comptime T: type) type {
         // - an item in the list got replaced by another
 
         pub const Iterator = struct {
-            lock: *std.Thread.RwLock,
+            lock: *runtime.Lock,
             items: []const T,
             index: usize = 0,
 

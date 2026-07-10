@@ -4,16 +4,17 @@ const lasting_allocator = internal.allocator;
 const Atom = @import("data.zig").Atom;
 const ListAtom = @import("data.zig").ListAtom;
 const EventSource = @import("listener.zig").EventSource;
+const runtime = @import("runtime.zig");
 
 pub var runningTimers = ListAtom(*Timer).init(internal.allocator);
 
 pub fn handleTimersTick(_: ?*anyopaque) void {
-    const now = std.time.Instant.now() catch @panic("a monotonic clock is required for timers");
+    const now = runtime.monotonicNow();
 
     var iterator = runningTimers.iterate();
     defer iterator.deinit();
     while (iterator.next()) |timer| {
-        if (now.since(timer.started.?) >= timer.duration.get()) {
+        if (timer.started.?.durationTo(now).nanoseconds >= timer.duration.get()) {
             timer.started = now;
             timer.tick();
             if (timer.single_shot) {
@@ -26,7 +27,7 @@ pub fn handleTimersTick(_: ?*anyopaque) void {
 pub const Timer = struct {
     /// Whether the timer should only fire once.
     single_shot: bool,
-    started: ?std.time.Instant = null,
+    started: ?std.Io.Timestamp = null,
     /// Duration in nanoseconds
     /// Note that despite the fact that the duration is in nanoseconds, this does not mean
     /// that a sub-millisecond precision is guarenteed.
@@ -54,7 +55,7 @@ pub const Timer = struct {
         if (self.started != null) {
             return error.TimerAlreadyRunning;
         }
-        self.started = try std.time.Instant.now();
+        self.started = runtime.monotonicNow();
         try runningTimers.append(self);
     }
 

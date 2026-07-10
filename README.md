@@ -9,7 +9,7 @@
 
 **As of now, Capy is NOT ready for use in production as I'm still making breaking changes**
 
-**Capy targets Zig version `0.15.2`**
+**Capy targets Zig version `0.16.0`**
 
 ---
 
@@ -82,6 +82,19 @@ fn buttonClicked(button: *capy.Button) !void {
 
 It is easy to add something like a button or a text area. The example can already be used to notice a widget's parameters are usually enclosed in anonymous
 structs (`.{ .label = "Save" }`). You can also see that simply wrapping a widget with `capy.Expanded( ... )` will tell it to take all the space it can.
+
+## Development and CI
+
+Use the top-level scripts so local work and Mechatron Prime exercise the same sandboxed Nix builds:
+
+```sh
+./build
+./test
+```
+
+`./build` produces the ReleaseFast shared C-ABI library through `packages.<system>.default`. `./test` runs the complete ReleaseSafe unit suite through `checks.<system>.test`; Linux tests use an isolated D-Bus session and Xvfb so GTK behavior is exercised headlessly. Both builds target Zig's baseline CPU for portable CI artifacts.
+
+The Linux GTK backend cannot use a static-musl build because GTK and its platform libraries are dynamically linked. The portable baseline glibc build is therefore the intentional CI boundary.
 
 ## Contributing
 Contributing can be as simple as opening an issue and detailling what bug you encountered or what feature you wish to have.  

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -u
+
+failures=0
+system="$(nix eval --impure --raw --expr builtins.currentSystem)"
+
+if ! ./tests/integration/ci_contract; then
+	failures=$((failures + 1))
+fi
+
+if ! nix build ".#checks.${system}.test" --no-link; then
+	failures=$((failures + 1))
+fi
+
+if ((failures == 0)); then
+	printf 'All Capy tests passed.\n'
+fi
+
+exit "$failures"

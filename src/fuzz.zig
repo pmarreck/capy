@@ -1,6 +1,7 @@
 //! Randomly test data and lower it down
 const std = @import("std");
 const trait = @import("trait.zig");
+const runtime = @import("runtime.zig");
 
 pub fn forAll(comptime T: type) Iterator(T) {
     return Iterator(T).init();
@@ -53,14 +54,14 @@ pub fn testFunction(comptime T: type, duration: i64, func: fn (T) anyerror!void)
         /// Tries to find counter-examples (case where there is no error) in the
         /// given time and adjust the hypothesis based on that counter-example.
         pub fn refine(self: *Self, time: i64, callback: fn (T) anyerror!void) void {
-            var prng = std.Random.DefaultPrng.init(@as(u64, @bitCast(std.time.milliTimestamp())));
+            var prng = std.Random.DefaultPrng.init(@truncate(@as(u96, @bitCast(runtime.monotonicNow().nanoseconds))));
             const random = prng.random();
 
             const timePerElement = @divFloor(time, @as(i64, @intCast(self.elements.items.len)));
             for (self.elements.items) |*element| {
-                const start = std.time.milliTimestamp();
+                const start = runtime.monotonicNow();
                 var stepSize: T = 1000;
-                while (std.time.milliTimestamp() < start + timePerElement) {
+                while (runtime.elapsedNanosecondsSince(start) / std.time.ns_per_ms < timePerElement) {
                     switch (element.*) {
                         .BiggerThan => |value| {
                             //const add = random.uintLessThanBiased(T, stepSize);
@@ -159,17 +160,17 @@ pub fn Iterator(comptime T: type) type {
     return struct {
         count: usize = 0,
         rand: std.Random.DefaultPrng,
-        start: i64,
+        start: std.Io.Timestamp,
         /// Duration in milliseconds
         duration: i64,
 
         pub const Self = @This();
-        const DETERMINISTIC_TEST = false;
+        const deterministic_iterations = 1_000;
 
         pub fn init() Self {
             return Self{
-                .rand = std.Random.DefaultPrng.init(if (DETERMINISTIC_TEST) 0 else @as(u64, @truncate(@as(u128, @bitCast(std.time.nanoTimestamp()))))),
-                .start = std.time.milliTimestamp(),
+                .rand = std.Random.DefaultPrng.init(if (@import("builtin").is_test) 0 else @truncate(@as(u96, @bitCast(runtime.monotonicNow().nanoseconds)))),
+                .start = runtime.monotonicNow(),
                 .duration = 100,
             };
         }
@@ -178,9 +179,11 @@ pub fn Iterator(comptime T: type) type {
             if (!comptime std.meta.hasUniqueRepresentation(T)) {
                 @compileError(@typeName(T) ++ " doesn't have an unique representation");
             }
-            //if (self.count >= 10) return null;
-            if (std.time.milliTimestamp() >= self.start + self.duration) {
-                std.log.scoped(.iterator).debug("Did {d} rounds in {d} ms", .{ self.count, std.time.milliTimestamp() - self.start });
+            const elapsed_ms = runtime.elapsedNanosecondsSince(self.start) / std.time.ns_per_ms;
+            if ((@import("builtin").is_test and self.count >= deterministic_iterations) or
+                (!@import("builtin").is_test and elapsed_ms >= self.duration))
+            {
+                std.log.scoped(.iterator).debug("Did {d} rounds in {d} ms", .{ self.count, elapsed_ms });
                 return null;
             }
 

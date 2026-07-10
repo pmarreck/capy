@@ -452,13 +452,19 @@ pub fn GenerateConfigStruct(comptime T: type) type {
             .alignment = @alignOf(?T.DrawCallback),
         }};
 
-        const t = @Type(.{ .@"struct" = .{
-            .layout = .auto,
-            .backing_integer = null,
-            .fields = config_fields,
-            .decls = &.{},
-            .is_tuple = false,
-        } });
+        var field_names: [config_fields.len][:0]const u8 = undefined;
+        var field_types: [config_fields.len]type = undefined;
+        var field_attributes: [config_fields.len]std.builtin.Type.StructField.Attributes = undefined;
+        for (config_fields, 0..) |field, index| {
+            field_names[index] = field.name;
+            field_types[index] = field.type;
+            field_attributes[index] = .{
+                .@"comptime" = field.is_comptime,
+                .@"align" = field.alignment,
+                .default_value_ptr = field.default_value_ptr,
+            };
+        }
+        const t = @Struct(.auto, null, &field_names, &field_types, &field_attributes);
         return t;
     }
 }
@@ -688,8 +694,7 @@ pub fn Events(comptime T: type) type {
         fn errorHandler(err: anyerror) callconv(.auto) void {
             std.log.err("{s}", .{@errorName(err)});
             var streamBuf: [16384]u8 = undefined;
-            var stream = std.io.fixedBufferStream(&streamBuf);
-            var writer = stream.writer();
+            var writer: std.Io.Writer = .fixed(&streamBuf);
             writer.print("Internal error: {s}.\n", .{@errorName(err)}) catch {};
             if (@errorReturnTrace()) |trace| {
                 std.debug.dumpStackTrace(trace.*);
@@ -703,7 +708,7 @@ pub fn Events(comptime T: type) type {
                 }
             }
             writer.print("Please check the log.", .{}) catch {};
-            backend.showNativeMessageDialog(.Error, "{s}", .{stream.getWritten()});
+            backend.showNativeMessageDialog(.Error, "{s}", .{writer.buffered()});
         }
 
         fn clickHandler(data: usize) void {
